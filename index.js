@@ -25,7 +25,6 @@ const FRIENDS = [
 ]
 
 let death = 0
-let currentTarget = null
 let lastProtectMessage = 0
 let godMode = false
 
@@ -73,11 +72,26 @@ function createBot() {
         // PATHFINDER SETTINGS
         // =========================
 
-        defaultMove.canDig = false
-        defaultMove.allowParkour = false
+        defaultMove.canDig = true
+        defaultMove.allowParkour = true
         defaultMove.canOpenDoors = true
         defaultMove.allowSprinting = true
+        defaultMove.canSprint = true
 
+        defaultMove.allowFreeMotion = true
+        defaultMove.allowEntityDetection = true
+
+        defaultMove.digCost = 1
+        defaultMove.placeCost = 1
+
+        defaultMove.maxDropDown = 4
+        defaultMove.infiniteLiquidDropdownDistance = true
+
+        defaultMove.scafoldingBlocks = [
+            mcData.itemsByName.dirt.id,
+            mcData.itemsByName.cobblestone.id,
+            mcData.itemsByName.netherrack.id
+        ]
         bot.pathfinder.setMovements(defaultMove)
 
         bot.chat('🤖 AI Combat Bot Online')
