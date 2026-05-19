@@ -657,8 +657,34 @@ function createBot() {
             }
         }
         // =========================
-        // FIGHT
+        // ADD FRIEND
         // =========================
+
+        if (message.startsWith('!friend add ')) {
+
+            const newFriend = message.split(' ')[2]
+
+            if (!newFriend) {
+
+                bot.chat('❌ Specify username.')
+
+                return
+            }
+
+            // Already friend
+            if (FRIENDS.includes(newFriend)) {
+
+                bot.chat(`✅ ${newFriend} already friend.`)
+
+                return
+            }
+
+            FRIENDS.push(newFriend)
+
+            bot.chat(`🤝 Added ${newFriend} as friend.`)
+
+            console.log(`🤝 Friend added: ${newFriend}`)
+        }
         // =========================
         // HELP COMMAND
         // =========================
@@ -687,35 +713,212 @@ function createBot() {
 
             bot.chat('/msg SilverSurfer915 =========================')
         }
+        // =========================
+        // FIGHT COMMAND
+        // AREA CLEAR MODE
+        // =========================
+
         if (message === '!fight') {
+
+            const owner = bot.players[OWNER]?.entity
+
+            if (!owner) {
+
+                bot.chat('❌ Cannot find owner.')
+
+                return
+            }
+
+            bot.chat('⚔️ Area clear mode enabled.')
+
+            // Hostile mob priority
+            const priorities = {
+                creeper: 100,
+                skeleton: 90,
+                witch: 85,
+                ravager: 80,
+                pillager: 75,
+                enderman: 70,
+                spider: 60,
+                zombie: 50,
+                drowned: 50,
+                husk: 50,
+                stray: 50,
+                slime: 40
+            }
+
+            // Get all nearby hostile mobs
+            const hostiles = Object.values(bot.entities).filter(e => {
+
+                if (!e) return false
+
+                if (!e.isValid) return false
+
+                if (!e.position) return false
+
+                // Ignore passive mobs
+                if (!priorities[e.name]) return false
+
+                // Same-ish Y level
+                if (
+                    Math.abs(
+                        e.position.y - owner.position.y
+                    ) > 3
+                ) return false
+
+                // 30 block radius
+                return (
+                    e.position.distanceTo(owner.position) <= 30
+                )
+            })
+
+            if (hostiles.length === 0) {
+
+                bot.chat('❌ No hostile mobs nearby.')
+
+                return
+            }
+
+            // Sort by priority first
+            // then nearest distance
+            hostiles.sort((a, b) => {
+
+                const priorityDiff =
+                    priorities[b.name] - priorities[a.name]
+
+                if (priorityDiff !== 0) {
+
+                    return priorityDiff
+                }
+
+                return (
+                    a.position.distanceTo(bot.entity.position) -
+                    b.position.distanceTo(bot.entity.position)
+                )
+            })
+
+            // Attack first target
+            const target = hostiles[0]
+
+            if (!target) return
+
+            try {
+
+                currentTarget = target
+
+                bot.chat(
+                    `⚔️ Engaging ${target.name}`
+                )
+
+                attackTarget(target)
+
+                // Auto continue clearing
+                const combatInterval = setInterval(() => {
+
+                    // Stop if manually stopped
+                    if (!currentTarget) {
+
+                        clearInterval(combatInterval)
+
+                        return
+                    }
+
+                    // Find next hostile
+                    const nextTarget = Object.values(bot.entities).find(e => {
+
+                        if (!e) return false
+
+                        if (!e.isValid) return false
+
+                        if (!e.position) return false
+
+                        if (!priorities[e.name]) return false
+
+                        if (
+                            Math.abs(
+                                e.position.y - owner.position.y
+                            ) > 3
+                        ) return false
+
+                        return (
+                            e.position.distanceTo(owner.position) <= 30
+                        )
+                    })
+
+                    if (!nextTarget) {
+
+                        bot.chat('✅ Area cleared.')
+
+                        currentTarget = null
+
+                        bot.pvp.stop()
+
+                        clearInterval(combatInterval)
+
+                        return
+                    }
+
+                    // Already attacking
+                    if (bot.pvp.target === nextTarget) return
+
+                    currentTarget = nextTarget
+
+                    attackTarget(nextTarget)
+
+                }, 2000)
+
+            } catch (err) {
+
+                console.log('❌ Fight command failed')
+
+                console.log(err)
+            }
+        }
+        // =========================
+        // PROJECTILE DEFENSE
+        // =========================
+
+        bot.on('entitySpawn', entity => {
+
+            if (!entity) return
+
+            // Detect arrows
+            if (entity.name !== 'arrow') return
 
             const owner = bot.players[OWNER]?.entity
 
             if (!owner) return
 
-            const target = bot.nearestEntity(e => {
+            // Arrow near owner
+            const nearOwner =
+                entity.position.distanceTo(owner.position) <= 5
 
-                if (!isValidEnemy(e)) return false
+            // Arrow near bot
+            const nearBot =
+                entity.position.distanceTo(bot.entity.position) <= 5
+
+            if (!nearOwner && !nearBot) return
+
+            // Find nearby skeleton
+            const skeleton = bot.nearestEntity(e => {
+
+                if (!e) return false
+
+                if (e.name !== 'skeleton') return false
+
+                if (!e.position) return false
 
                 return (
-                    e.position.distanceTo(owner.position) <= 5
+                    e.position.distanceTo(entity.position) <= 20
                 )
             })
 
-            if (!target) {
+            if (!skeleton) return
 
-                bot.chat('❌ No target near owner.')
+            console.log('🏹 Skeleton detected')
 
-                return
-            }
-
-            bot.chat(
-                `⚔️ Attacking ${target.name || target.username}`
-            )
-
-            attackTarget(target)
-        }
-        // =========================
+            attackTarget(skeleton)
+        })// =========================
         // STORE COMMAND
         // =========================
 
