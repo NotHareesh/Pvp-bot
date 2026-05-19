@@ -1,278 +1,905 @@
 const mineflayer = require('mineflayer')
+const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const pvp = require('mineflayer-pvp').plugin
-const {
-    pathfinder,
-    Movements,
-    goals
-} = require('mineflayer-pathfinder')
-const armorManager = require('mineflayer-armor-manager')
+const minecraftData = require('minecraft-data')
+const collectBlock = require('mineflayer-collectblock').plugin
+const fs = require('fs')
+const express = require('express')
 
-const cmd = require('mineflayer-cmd').plugin
-const fs = require('fs');
-let rawdata = fs.readFileSync('config.json');
-let data = JSON.parse(rawdata);
-var lasttime = -1;
-var moving = 0;
-var first = false;
-var connected = 0;
-var actions = ['forward', 'back', 'left', 'right']
-var lastaction;
-var pi = 3.14159;
-var moveinterval = 2; // 2 second movement interval
-var maxrandom = 5; // 0-5 seconds added to movement interval (randomly)
-var host = data["ip"];
-var username = data["name"]
-var nightskip = data["auto-night-skip"]
+let rawdata = fs.readFileSync('config.json')
+let data = JSON.parse(rawdata)
 
-const bot = mineflayer.createBot({
-    host: host,
-    port: data["port"],
-    username: username,
-    logErrors: false
-})
-let death = 0;
-let simp = 0;
-let popularity = 0;
-let pvpc = 0;
+const app = express()
 
-bot.loadPlugin(cmd)
+// =========================
+// SETTINGS
+// =========================
+function logToOwner(bot, msg) {
 
-
-
-bot.on('login', function () {
-    console.log("Trying to login")
-    if (data["login-enabled"] == "true") {
-        bot.chat(data["login-cmd"])
-        setTimeout(bot.chat(data["register-cmd"]), 2000);
-       
-    }
-    for (let i = 0; i < 10; i++) {
-        task(i);
-    }
-    console.log("Logged In")
-    bot.chat("hello");
-});
-
-function task(i) {
-
-    setTimeout(function () {
-        if (first == true) {
-            bot.chat("Support the Project https://github.com/healer-op/AternosAfkBot staring it")
-            first = false;
-        } else {
-            bot.chat("Support the Project https://github.com/healer-op/AternosAfkBot staring it")
-            first = true;
-        }
-    }, 3600000 * i);
+    bot.chat(`/msg ${OWNER} ${msg}`)
 }
+const OWNER = 'SilverSurfer915'
 
+const FRIENDS = [
+    OWNER
+]
 
-bot.on('time', function (time) {
+let death = 0
+let currentTarget = null
+let lastProtectMessage = 0
+let godMode = false
 
+// =========================
+// CREATE BOT
+// =========================
 
-    if (nightskip == "true") {
-        if (bot.time.timeOfDay >= 13000) {
-            bot.chat('/time set day')
+function createBot() {
+
+    const bot = mineflayer.createBot({
+        host: data.ip,
+        port: data.port,
+        username: data.name,
+        auth: 'offline'
+    })
+
+    // =========================
+    // LOAD PLUGINS
+    // =========================
+
+    bot.loadPlugin(pathfinder)
+    bot.loadPlugin(pvp)
+    bot.loadPlugin(collectBlock)
+    // =========================
+    // LOGIN
+    // =========================
+
+    bot.on('login', () => {
+        console.log('🤖 Bot logged in!')
+    })
+
+    // =========================
+    // SPAWN
+    // =========================
+
+    bot.once('spawn', () => {
+
+        console.log('✅ Bot spawned!')
+
+        const mcData = minecraftData(bot.version)
+
+        const defaultMove = new Movements(bot, mcData)
+
+        // =========================
+        // PATHFINDER SETTINGS
+        // =========================
+
+        defaultMove.canDig = false
+        defaultMove.allowParkour = false
+        defaultMove.canOpenDoors = true
+        defaultMove.allowSprinting = true
+
+        bot.pathfinder.setMovements(defaultMove)
+
+        bot.chat('🤖 AI Combat Bot Online')
+
+        // =========================
+        // AUTO EQUIP ARMOR
+        // =========================
+
+        setInterval(() => {
+
+            const helmet = bot.inventory.items().find(item =>
+                item.name.includes('helmet')
+            )
+
+            const chestplate = bot.inventory.items().find(item =>
+                item.name.includes('chestplate')
+            )
+
+            const leggings = bot.inventory.items().find(item =>
+                item.name.includes('leggings')
+            )
+
+            const boots = bot.inventory.items().find(item =>
+                item.name.includes('boots')
+            )
+
+            if (helmet) {
+                bot.equip(helmet, 'head').catch(() => { })
+            }
+
+            if (chestplate) {
+                bot.equip(chestplate, 'torso').catch(() => { })
+            }
+
+            if (leggings) {
+                bot.equip(leggings, 'legs').catch(() => { })
+            }
+
+            if (boots) {
+                bot.equip(boots, 'feet').catch(() => { })
+            }
+
+        }, 5000)
+
+        // =========================
+        // AUTO EQUIP SWORD
+        // =========================
+
+        setInterval(() => {
+
+            const sword = bot.inventory.items().find(item =>
+                item.name.includes('netherite_sword') ||
+                item.name.includes('diamond_sword') ||
+                item.name.includes('iron_sword')
+            )
+
+            if (!sword) return
+
+            if (
+                bot.heldItem &&
+                bot.heldItem.name === sword.name
+            ) return
+
+            bot.equip(sword, 'hand').catch(() => { })
+
+        }, 3000)
+
+        // =========================
+        // TOTEM AUTO EQUIP
+        // =========================
+
+        setInterval(() => {
+
+            const totem = bot.inventory.items().find(item =>
+                item.name.includes('totem')
+            )
+
+            if (!totem) return
+
+            bot.equip(totem, 'off-hand').catch(() => { })
+
+        }, 3000)
+
+        // =========================
+        // LOW HEALTH PEARL ESCAPE
+        // =========================
+
+        let lastPearl = 0
+        let escaping = false
+
+        bot.on('physicsTick', async () => {
+
+            // Already escaping
+            if (escaping) return
+
+            // Only pearl at VERY low HP
+            if (bot.health > 4) return
+
+            const now = Date.now()
+
+            // 15 second cooldown
+            if (now - lastPearl < 15000) return
+
+            const pearl = bot.inventory.items().find(item =>
+                item.name.includes('ender_pearl')
+            )
+
+            if (!pearl) return
+
+            try {
+
+                escaping = true
+                lastPearl = now
+
+                console.log('🟣 Pearl escape used')
+
+                // STOP combat
+                bot.pvp.stop()
+
+                currentTarget = null
+
+                // Equip pearl
+                await bot.equip(pearl, 'hand')
+
+                // Look SLIGHTLY upward
+                // NOT TOO HIGH
+                await bot.look(
+                    bot.entity.yaw,
+                    -0.3,
+                    true
+                )
+
+                // Throw pearl
+                bot.activateItem()
+
+                // Run away after pearl
+                bot.setControlState('forward', true)
+                bot.setControlState('sprint', true)
+
+                setTimeout(() => {
+
+                    bot.setControlState('forward', false)
+
+                    escaping = false
+
+                }, 4000)
+
+            } catch (err) {
+
+                escaping = false
+
+                console.log('❌ Pearl escape failed')
+            }
+        })
+        // =========================
+        // VALID ENEMY CHECK
+        // =========================
+
+        function isValidEnemy(entity) {
+
+            if (!entity) return false
+
+            if (!entity.isValid) return false
+
+            if (!entity.position) return false
+
+            // Ignore self
+            if (entity === bot.entity) return false
+
+            // Ignore friends
+            if (
+                entity.username &&
+                FRIENDS.includes(entity.username)
+            ) return false
+
+            // Ignore projectiles/items
+            if (
+                entity.type === 'object' ||
+                entity.type === 'other' ||
+                entity.name === 'wind_charge' ||
+                entity.name === 'arrow' ||
+                entity.name === 'fireball' ||
+                entity.name === 'small_fireball'
+            ) return false
+
+            return true
         }
-    }
-    if (connected < 1) {
-        return;
-    }
-    if (lasttime < 0) {
-        lasttime = bot.time.age;
-    } else {
-        var randomadd = Math.random() * maxrandom * 20;
-        var interval = moveinterval * 20 + randomadd;
-        if (bot.time.age - lasttime > interval) {
-            if (moving == 1) {
-                bot.setControlState(lastaction, false);
-                moving = 0;
-                lasttime = bot.time.age;
-            } else {
-                var yaw = Math.random() * pi - (0.5 * pi);
-                var pitch = Math.random() * pi - (0.5 * pi);
-                bot.look(yaw, pitch, false);
-                lastaction = actions[Math.floor(Math.random() * actions.length)];
-                bot.setControlState(lastaction, true);
-                moving = 1;
-                lasttime = bot.time.age;
-                bot.activateItem();
+
+        // =========================
+        // SMART ATTACK
+        // =========================
+
+        function attackTarget(target) {
+
+            if (!isValidEnemy(target)) return
+
+            currentTarget = target
+
+            console.log(
+                `⚔️ Attacking ${target.name || target.username}`
+            )
+
+            // Sprint attacks
+            bot.setControlState('sprint', true)
+
+            // Random crit jumps
+            if (Math.random() > 0.6) {
+
+                bot.setControlState('jump', true)
+
+                setTimeout(() => {
+
+                    bot.setControlState('jump', false)
+
+                }, 250)
+            }
+
+            try {
+
+                bot.pvp.attack(target)
+
+            } catch (err) {
+
+                console.log('❌ Attack failed')
             }
         }
-    }
-});
 
-bot.on('spawn', function () {
-    connected = 1;
-});
+        // =========================
+        // SELF DEFENSE
+        // =========================
 
-bot.on('death', function () {
-    death++;
-    bot.emit("respawn")
-});
+        bot.on('entityHurt', entity => {
 
+            // Bot got hit
+            if (entity !== bot.entity) return
 
+            console.log('⚠️ I got attacked!')
 
-bot.loadPlugin(pvp)
-bot.loadPlugin(armorManager)
-bot.loadPlugin(pathfinder)
+            const attacker = bot.nearestEntity(e => {
 
+                if (!isValidEnemy(e)) return false
 
-bot.on('playerCollect', (collector, itemDrop) => {
-    if (collector !== bot.entity) return
+                return (
+                    e.position.distanceTo(bot.entity.position) <= 6
+                )
+            })
 
-    setTimeout(() => {
-        const sword = bot.inventory.items().find(item => item.name.includes('sword'))
-        if (sword) bot.equip(sword, 'hand')
-    }, 150)
-})
+            if (!attacker) return
 
-bot.on('playerCollect', (collector, itemDrop) => {
-    if (collector !== bot.entity) return
+            console.log(
+                `⚔️ Counter attacking ${attacker.name || attacker.username}`
+            )
 
-    setTimeout(() => {
-        const shield = bot.inventory.items().find(item => item.name.includes('shield'))
-        if (shield) bot.equip(shield, 'off-hand')
-    }, 250)
-})
+            attackTarget(attacker)
+        })
 
-let guardPos = null
+        // =========================
+        // PROTECT OWNER
+        // =========================
 
-function guardArea(pos) {
-    guardPos = pos.clone()
+        bot.on('entityHurt', entity => {
 
-    if (!bot.pvp.target) {
-        moveToGuardPos()
-    }
+            const owner = bot.players[OWNER]?.entity
+
+            if (!owner) return
+
+            // Owner got hit
+            if (entity !== owner) return
+
+            const attacker = bot.nearestEntity(e => {
+
+                if (!isValidEnemy(e)) return false
+
+                return (
+                    e.position.distanceTo(owner.position) <= 6
+                )
+            })
+
+            if (!attacker) return
+
+            const now = Date.now()
+
+            if (now - lastProtectMessage > 5000) {
+
+                logToOwner(bot, `🛡️ Protecting you!`)
+
+                lastProtectMessage = now
+            }
+
+            attackTarget(attacker)
+        })
+
+        // =========================
+        // WOLF AI
+        // ASSIST OWNER ATTACKS
+        // =========================
+
+        bot.on('entitySwingArm', entity => {
+
+            // Only owner
+            if (!entity) return
+
+            if (entity.username !== OWNER) return
+
+            // Find nearest entity near owner
+            const target = bot.nearestEntity(e => {
+
+                if (!isValidEnemy(e)) return false
+
+                // Must be VERY close to owner
+                return (
+                    e.position.distanceTo(entity.position) <= 4
+                )
+            })
+
+            if (!target) return
+
+            logToOwner(
+                bot,
+                `🐺 Assisting against ${target.name || target.username}`
+            )
+            attackTarget(target)
+        })
+        // =========================
+        // SHIELD AI
+        // =========================
+
+        setInterval(async () => {
+
+            // Need active combat
+            if (!bot.pvp.target) return
+
+            const shield = bot.inventory.items().find(item =>
+                item.name.includes('shield')
+            )
+
+            if (!shield) return
+
+            try {
+
+                // Equip shield
+                await bot.equip(shield, 'off-hand')
+
+                // Random blocking
+                if (Math.random() > 0.5) {
+
+                    console.log('🛡️ Blocking')
+
+                    bot.activateItem()
+
+                    setTimeout(() => {
+
+                        bot.deactivateItem()
+
+                    }, 700)
+                }
+
+            } catch (err) {
+
+                console.log('❌ Shield failed')
+            }
+
+        }, 2000)
+        // =========================
+        // RESET TARGET
+        // =========================
+
+        bot.on('entityDead', entity => {
+
+            if (entity === currentTarget) {
+
+                currentTarget = null
+
+                bot.pvp.stop()
+            }
+        })
+
+        // =========================
+        // FOLLOW OWNER
+        // =========================
+
+        setInterval(() => {
+
+            const owner = bot.players[OWNER]?.entity
+
+            if (!owner) return
+
+            const distance = bot.entity.position.distanceTo(owner.position)
+
+            // Stay close to owner
+            if (distance > 4 && !bot.pvp.target) {
+
+                const goal = new goals.GoalFollow(owner, 2)
+
+                bot.pathfinder.setGoal(goal, true)
+            }
+
+        }, 3000)
+    })
+
+    // =========================
+    // CHAT COMMANDS
+    // =========================
+
+    bot.on('chat', async (username, message) => {
+
+        if (username === bot.username) return
+
+        // OWNER ONLY
+        if (username !== OWNER) return
+
+        console.log(`📩 ${username}: ${message}`)
+
+        // =========================
+        // STOP
+        // =========================
+
+        if (message === '!stop') {
+
+            currentTarget = null
+
+            bot.pathfinder.setGoal(null)
+            bot.pvp.stop()
+
+            bot.chat('🛑 Combat stopped.')
+        }
+        // =========================
+        // MINE COMMAND
+        // =========================
+
+        if (message.startsWith('!mine ')) {
+
+            const blockName = message.split(' ')[1]
+
+            if (!blockName) {
+
+                bot.chat('❌ Specify block.')
+
+                return
+            }
+
+            const mcData = minecraftData(bot.version)
+
+            const blockType = mcData.blocksByName[blockName]
+
+            if (!blockType) {
+
+                bot.chat('❌ Invalid block.')
+
+                return
+            }
+
+            bot.chat(`⛏️ Searching for ${blockName}...`)
+
+            const block = bot.findBlock({
+
+                matching: blockType.id,
+                maxDistance: 128
+            })
+
+            if (!block) {
+
+                bot.chat(`❌ No ${blockName} nearby.`)
+
+                return
+            }
+
+            try {
+
+                await bot.collectBlock.collect(block)
+
+                bot.chat(`✅ Mined ${blockName}`)
+
+            } catch (err) {
+
+                bot.chat(`❌ Failed to mine ${blockName}`)
+
+                console.log(err)
+            }
+        }
+        // =========================
+        // FOLLOW
+        // =========================
+
+        if (message === '!follow') {
+
+            const target = bot.players[username]?.entity
+
+            if (!target) {
+                bot.chat('❌ Cannot find you.')
+                return
+            }
+
+            const goal = new goals.GoalFollow(target, 2)
+
+            bot.pathfinder.setGoal(goal, true)
+
+            bot.chat(`👣 Following ${username}`)
+        }
+
+        // =========================
+        // COME
+        // =========================
+
+        if (message === '!come') {
+
+            const target = bot.players[username]?.entity
+
+            if (!target) {
+                bot.chat('❌ Cannot find you.')
+                return
+            }
+
+            const goal = new goals.GoalNear(
+                target.position.x,
+                target.position.y,
+                target.position.z,
+                1
+            )
+
+            bot.pathfinder.setGoal(goal)
+
+            bot.chat('🏃 Coming!')
+        }
+
+        // =========================
+        // JUMP
+        // =========================
+
+        if (message === '!jump') {
+
+            bot.setControlState('jump', true)
+
+            setTimeout(() => {
+                bot.setControlState('jump', false)
+            }, 500)
+
+            bot.chat('🦘 Jumped!')
+        }
+        // =========================
+        // DROP COMMAND
+        // =========================
+
+        if (message.startsWith('!drop ')) {
+
+            const itemName = message.split(' ')[1]
+
+            if (!itemName) {
+
+                bot.chat('❌ Specify item.')
+
+                return
+            }
+
+            const item = bot.inventory.items().find(i =>
+                i.name.includes(itemName)
+            )
+
+            if (!item) {
+
+                bot.chat(`❌ No ${itemName} found.`)
+
+                return
+            }
+
+            try {
+
+                await bot.tossStack(item)
+
+                bot.chat(`📦 Dropped ${item.name}`)
+
+            } catch (err) {
+
+                bot.chat('❌ Failed to drop item.')
+
+                console.log(err)
+            }
+        }
+        // =========================
+        // FIGHT
+        // =========================
+        // =========================
+        // HELP COMMAND
+        // =========================
+
+        if (message === '!help') {
+
+            bot.chat('/msg SilverSurfer915 ===== 🤖 BOT COMMANDS =====')
+
+            bot.chat('/msg SilverSurfer915 !follow → Follow owner')
+
+            bot.chat('/msg SilverSurfer915 !come → Come to owner')
+
+            bot.chat('/msg SilverSurfer915 !stop → Stop combat/pathfinding')
+
+            bot.chat('/msg SilverSurfer915 !fight → Attack nearest target near owner')
+
+            bot.chat('/msg SilverSurfer915 !jump → Make bot jump')
+
+            bot.chat('/msg SilverSurfer915 !god → Toggle god mode')
+
+            bot.chat('/msg SilverSurfer915 !mine <block> → Mine block')
+
+            bot.chat('/msg SilverSurfer915 !drop <item> → Drop item')
+
+            bot.chat('/msg SilverSurfer915 !store → Store inventory in chest')
+
+            bot.chat('/msg SilverSurfer915 =========================')
+        }
+        if (message === '!fight') {
+
+            const owner = bot.players[OWNER]?.entity
+
+            if (!owner) return
+
+            const target = bot.nearestEntity(e => {
+
+                if (!isValidEnemy(e)) return false
+
+                return (
+                    e.position.distanceTo(owner.position) <= 5
+                )
+            })
+
+            if (!target) {
+
+                bot.chat('❌ No target near owner.')
+
+                return
+            }
+
+            bot.chat(
+                `⚔️ Attacking ${target.name || target.username}`
+            )
+
+            attackTarget(target)
+        }
+        // =========================
+        // STORE COMMAND
+        // =========================
+
+        if (message === '!store') {
+
+            try {
+
+                const chestBlock = bot.findBlock({
+
+                    matching: block =>
+                        block.name.includes('chest'),
+
+                    maxDistance: 32
+                })
+
+                if (!chestBlock) {
+
+                    bot.chat('❌ No chest nearby.')
+
+                    return
+                }
+
+                bot.chat('📦 Storing items...')
+
+                const chest = await bot.openContainer(chestBlock)
+
+                const items = bot.inventory.items()
+
+                for (const item of items) {
+
+                    // Keep sword
+                    if (item.name.includes('sword')) continue
+
+                    // Keep armor
+                    if (
+                        item.name.includes('helmet') ||
+                        item.name.includes('chestplate') ||
+                        item.name.includes('leggings') ||
+                        item.name.includes('boots')
+                    ) continue
+
+                    try {
+
+                        await chest.deposit(
+                            item.type,
+                            null,
+                            item.count
+                        )
+
+                    } catch { }
+                }
+
+                chest.close()
+
+                bot.chat('✅ Stored inventory.')
+
+            } catch (err) {
+
+                bot.chat('❌ Failed to store items.')
+
+                console.log(err)
+            }
+        }
+        // =========================
+        // GOD MODE TOGGLE
+        // =========================
+
+        if (message === '!god') {
+
+            godMode = !godMode
+
+            // ENABLE
+            if (godMode) {
+
+                bot.chat('/effect give @s resistance infinite 255 true')
+                bot.chat('/effect give @s regeneration infinite 255 true')
+                bot.chat('/effect give @s saturation infinite 255 true')
+                bot.chat('/effect give @s strength infinite 255 true')
+                bot.chat('/effect give @s speed infinite 5 true')
+
+                bot.chat('/attribute @s attack_damage base set 1000')
+                bot.chat('/attribute @s attack_speed base set 20')
+                bot.chat('/attribute @s movement_speed base set 0.5')
+                bot.chat('/attribute @s max_health base set 1000')
+
+                bot.chat('😈 GOD MODE ENABLED')
+            }
+
+            // DISABLE
+            else {
+
+                bot.chat('/effect clear @s')
+
+                bot.chat('/attribute @s attack_damage base set 1')
+                bot.chat('/attribute @s attack_speed base set 4')
+                bot.chat('/attribute @s movement_speed base set 0.1')
+                bot.chat('/attribute @s max_health base set 20')
+
+                bot.chat('😇 GOD MODE DISABLED')
+            }
+        }
+    })
+
+    // =========================
+    // DEATH
+    // =========================
+
+    bot.on('death', () => {
+
+        death++
+        currentTarget = null
+
+        console.log(`💀 Bot died ${death} times`)
+    })
+
+    // =========================
+    // AUTO EAT
+    // =========================
+
+    bot.on('physicsTick', () => {
+
+        if (bot.food < 10) {
+
+            const food = bot.inventory.items().find(item =>
+                item.name.includes('bread') ||
+                item.name.includes('beef') ||
+                item.name.includes('porkchop') ||
+                item.name.includes('apple')
+            )
+
+            if (food) {
+
+                bot.equip(food, 'hand')
+                    .then(() => bot.consume())
+                    .catch(() => { })
+            }
+        }
+    })
+
+    // =========================
+    // EVENTS
+    // =========================
+
+    bot.on('kicked', reason => {
+        console.log('❌ Kicked:', reason)
+    })
+
+    bot.on('error', err => {
+        console.log('❌ Error:', err)
+    })
+
+    bot.on('end', () => {
+
+        console.log('🔄 Disconnected. Reconnecting in 5 seconds...')
+
+        setTimeout(createBot, 5000)
+    })
+
+    return bot
 }
 
-function stopGuarding() {
-    guardPos = null
-    bot.pvp.stop()
-    bot.pathfinder.setGoal(null)
-}
+// =========================
+// START BOT
+// =========================
 
-function moveToGuardPos() {
-    const mcData = require('minecraft-data')(bot.version)
-    bot.pathfinder.setMovements(new Movements(bot, mcData))
-    bot.pathfinder.setGoal(new goals.GoalBlock(guardPos.x, guardPos.y, guardPos.z))
-}
+createBot()
 
-bot.on('stoppedAttacking', () => {
-    if (guardPos) {
-        moveToGuardPos()
-    }
-})
-
-bot.on('physicTick', () => {
-    if (bot.pvp.target) return
-    if (bot.pathfinder.isMoving()) return
-
-    const entity = bot.nearestEntity()
-    if (entity) bot.lookAt(entity.position.offset(0, entity.height, 0))
-})
-
-bot.on('physicTick', () => {
-    if (!guardPos) return
-
-    const filter = e => e.type === 'mob' && e.position.distanceTo(bot.entity.position) < 16 &&
-        e.mobType !== 'Armor Stand' // Mojang classifies armor stands as mobs for some reason?
-
-    const entity = bot.nearestEntity(filter)
-    if (entity) {
-        bot.pvp.attack(entity)
-    }
-})
-
-bot.on('chat', (username, message) => {
-    if (username === bot.username) return
-    if (message === `Hi ${bot.username}` || message === `hi ${bot.username}` || message === `${bot.username} Hi` || message === `${bot.username} hi` || message === `Hello ${bot.username}` || message === `hello ${bot.username}` || message === `${bot.username} Hello` || message === `${bot.username} hello`) {
-        popularity++;
-        bot.chat(`hi ${username}`)
-    }
-
-    if (message === `Hi ${bot.username} i am a girl`) {
-        simp++;
-        bot.chat(`hi ${username} my girl :smirk:`)
-        bot.chat(`hru qt`)
-        if (message === `i am fine`) {
-            bot.chat(`Oh lets Take The Finest One For A Coffee Today`)
-        }
-    }
-
-    if (message === `${bot.username} help` || message === `${bot.username} Help` || message === `help ${bot.username}` || message === `Help ${bot.username}`) {
-        bot.chat(`hi ${username} Here Are my commands`)
-        bot.chat(`===================================`)
-        bot.chat(`figth me myname`)
-        bot.chat(`Hi myname`)
-        bot.chat(`==================================`)
-        bot.chat(`Made by https://github.com/healer-op/AternosAfkBot`)
-    }
-
-    if (message === `Hi ${bot.username} i am a girl`) {
-        bot.chat(`hi ${username} my girl :smirk:`)
-        bot.chat(`hru qt`)
-    }
-    if (message === `guard ${bot.username}`) {
-        const player = bot.players[username]
-
-        if (!player) {
-            bot.chat(`I can't see you. ${username} Master!`)
-            return
-        }
-
-        bot.chat(`I will guard that location.${username}`)
-        guardArea(player.entity.position)
-    }
-
-    if (message === `fight me ${bot.username}`) {
-        const player = bot.players[username]
-
-        if (!player) {
-            bot.chat(`I can't see you. Keep Hiding ${username} Loser!`)
-            return
-        }
-
-        bot.chat(`Prepare to fight! ${username}`)
-        pvpc++;
-        bot.pvp.attack(player.entity)
-    }
-
-    if (message === `stop`) {
-        bot.chat('I will no longer guard this area.')
-        stopGuarding()
-    }
-
-
-})
-
-const port = process.env.PORT || 3000;
-
-const express = require('express')
-const app = express()
+// =========================
+// WEB SERVER
+// =========================
 
 app.get('/', (req, res) => {
 
-    res.send(`<b>${username}</b> is Online At <b>${host}</b> 
-    <br>
-    <br>
-    Die Counter <b>${death}</b>
-    <br>
-    <br>
-    Simp Counter <b>${simp}</b>
-    <br>
-    <br>
-    Popularity Counter <b>${popularity}</b>
-    <br>
-    <br>
-    Pvp Counter <b>${pvpc}</b>
-    <br>
-    <br>
-    Made By <b>https://github.com/healer-op/AternosAfkBot</b>`)
-});
+    res.send(`
+    <h1>🤖 AI Combat Bot</h1>
+    <p>Status: Online</p>
+    <p>Owner: ${OWNER}</p>
+    <p>Deaths: ${death}</p>
+    <p>Server: ${data.ip}</p>
+    `)
+})
 
+const PORT = process.env.PORT || 3000
 
-app.listen(port, () => {
-    console.log(`Example app listening at http://localhost:${port}`);
-    console.log('MADE BY HEALER')
+app.listen(PORT, () => {
+    console.log(`🌐 Web server running on port ${PORT}`)
 })

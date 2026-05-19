@@ -7,7 +7,7 @@ function mcDataToNode (mcData) {
     blocksByName: indexes.blocksByName,
     blocksArray: mcData.blocks,
     blocksByStateId: indexes.blocksByStateId,
-
+    blockMappings: mcData.blockMappings,
     blockStates: mcData.blockStates, // bedrock
 
     blockCollisionShapes: mcData.blockCollisionShapes,
@@ -22,8 +22,6 @@ function mcDataToNode (mcData) {
 
     foods: indexes.foodsById,
     foodsByName: indexes.foodsByName,
-    foodsByFoodPoints: indexes.foodsByFoodPoints,
-    foodsBySaturation: indexes.foodsBySaturation,
     foodsArray: mcData.foods,
 
     recipes: mcData.recipes,
@@ -39,6 +37,7 @@ function mcDataToNode (mcData) {
 
     mobs: indexes.mobsById,
     objects: indexes.objectsById,
+    entities: indexes.entitiesById,
     entitiesByName: indexes.entitiesByName,
     entitiesArray: mcData.entities,
 
@@ -82,6 +81,10 @@ function mcDataToNode (mcData) {
     mapIconsByName: indexes.mapIconsByName,
     mapIconsArray: mcData.mapIcons,
 
-    tints: mcData.tints
+    tints: mcData.tints,
+
+    sounds: indexes.soundsById,
+    soundsByName: indexes.soundsByName,
+    soundsArray: mcData.sounds
   }
 }

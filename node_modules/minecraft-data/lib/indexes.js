@@ -23,6 +23,7 @@ module.exports = function (mcData) {
     enchantmentsByName: indexer.buildIndexFromArray(mcData.enchantments, 'name'),
 
     entitiesByName: indexer.buildIndexFromArray(mcData.entities, 'name'),
+    entitiesById: indexer.buildIndexFromArray(mcData.entities, 'id'),
     mobsById: mcData.entities === undefined
       ? undefined
       : indexer.buildIndexFromArray(mcData.entities.filter(e => e.type === 'mob'), 'id'),
@@ -37,8 +38,6 @@ module.exports = function (mcData) {
 
     foodsById: indexer.buildIndexFromArray(mcData.foods, 'id'),
     foodsByName: indexer.buildIndexFromArray(mcData.foods, 'name'),
-    foodsByFoodPoints: indexer.buildIndexFromArray(mcData.foods, 'foodPoints'),
-    foodsBySaturation: indexer.buildIndexFromArray(mcData.foods, 'saturation'),
 
     windowsById: indexer.buildIndexFromArray(mcData.windows, 'id'),
     windowsByName: indexer.buildIndexFromArray(mcData.windows, 'name'),
@@ -56,7 +55,10 @@ module.exports = function (mcData) {
     mapIconsByName: indexer.buildIndexFromArray(mcData.mapIcons, 'name'),
 
     attributesByName: indexer.buildIndexFromArray(mcData.attributes, 'name'),
-    attributesByResource: indexer.buildIndexFromArray(mcData.attributes, 'resource')
+    attributesByResource: indexer.buildIndexFromArray(mcData.attributes, 'resource'),
+
+    soundsById: mcData.sounds === undefined ? undefined : indexer.buildIndexFromArray(mcData.sounds, 'id'),
+    soundsByName: mcData.sounds === undefined ? undefined : indexer.buildIndexFromArray(mcData.sounds, 'name')
 
   }
 }
