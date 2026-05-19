@@ -5,10 +5,10 @@ const minecraftData = require('minecraft-data')
 const collectBlock = require('mineflayer-collectblock').plugin
 const fs = require('fs')
 const express = require('express')
-
+let guardMode = false
 let rawdata = fs.readFileSync('config.json')
 let data = JSON.parse(rawdata)
-
+let currentTarget = null
 const app = express()
 
 // =========================
@@ -454,7 +454,71 @@ function createBot() {
                 bot.pvp.stop()
             }
         })
+        // =========================
+        // GUARD AI
+        // =========================
 
+        const hostileMobs = [
+            'zombie',
+            'skeleton',
+            'creeper',
+            'spider',
+            'enderman',
+            'witch',
+            'pillager',
+            'ravager',
+            'slime',
+            'drowned',
+            'husk',
+            'stray'
+        ]
+
+        setInterval(() => {
+
+            // Guard disabled
+            if (!guardMode) return
+
+            const owner = bot.players[OWNER]?.entity
+
+            if (!owner) return
+
+            // Already fighting
+            if (bot.pvp.target) return
+
+            // Find hostile near owner
+            const target = bot.nearestEntity(e => {
+
+                if (!e) return false
+
+                if (!e.isValid) return false
+
+                if (!e.position) return false
+
+                // Only hostile mobs
+                if (!hostileMobs.includes(e.name)) return false
+
+                // Same-ish Y level
+                if (
+                    Math.abs(
+                        e.position.y - owner.position.y
+                    ) > 3
+                ) return false
+
+                // 30 block radius
+                return (
+                    e.position.distanceTo(owner.position) <= 30
+                )
+            })
+
+            if (!target) return
+
+            console.log(
+                `🛡️ Guard attacking ${target.name}`
+            )
+
+            attackTarget(target)
+
+        }, 1500)
         // =========================
         // FOLLOW OWNER
         // =========================
@@ -492,7 +556,30 @@ function createBot() {
         console.log(`📩 ${username}: ${message}`)
 
         // =========================
-        // STOP
+        // GUARD MODE ON
+        // =========================
+
+        if (message === '!guard on') {
+
+            guardMode = true
+
+            bot.chat('🛡️ Guard mode enabled.')
+        }
+
+        // =========================
+        // GUARD MODE OFF
+        // =========================
+
+        if (message === '!guard off') {
+
+            guardMode = false
+
+            currentTarget = null
+
+            bot.pvp.stop()
+
+            bot.chat('❌ Guard mode disabled.')
+        }        // STOP
         // =========================
 
         if (message === '!stop') {
