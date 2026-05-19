@@ -2,7 +2,6 @@ const mineflayer = require('mineflayer')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const pvp = require('mineflayer-pvp').plugin
 const minecraftData = require('minecraft-data')
-const collectBlock = require('mineflayer-collectblock').plugin
 const fs = require('fs')
 const express = require('express')
 let guardMode = false
@@ -47,7 +46,6 @@ function createBot() {
 
     bot.loadPlugin(pathfinder)
     bot.loadPlugin(pvp)
-    bot.loadPlugin(collectBlock)
     // =========================
     // LOGIN
     // =========================
@@ -72,28 +70,32 @@ function createBot() {
         // PATHFINDER SETTINGS
         // =========================
 
-        defaultMove.canDig = true
+        defaultMove.canDig = false
+
         defaultMove.allowParkour = true
+
         defaultMove.canOpenDoors = true
+
         defaultMove.allowSprinting = true
         defaultMove.canSprint = true
 
-        defaultMove.allowFreeMotion = true
-        defaultMove.allowEntityDetection = true
-
-        defaultMove.digCost = 1
+        // Allow block placing
         defaultMove.placeCost = 1
 
-        defaultMove.maxDropDown = 4
-        defaultMove.infiniteLiquidDropdownDistance = true
+        // Avoid digging
+        defaultMove.digCost = 999
 
+        // Safer movement
+        defaultMove.maxDropDown = 3
+
+        defaultMove.infiniteLiquidDropdownDistance = false
+
+        // Allowed scaffold blocks
         defaultMove.scafoldingBlocks = [
-            mcData.itemsByName.dirt.id,
-            mcData.itemsByName.cobblestone.id,
-            mcData.itemsByName.netherrack.id
+            mcData.itemsByName.dirt.id
         ]
-        bot.pathfinder.setMovements(defaultMove)
 
+        bot.pathfinder.setMovements(defaultMove)
         bot.chat('🤖 AI Combat Bot Online')
 
         // =========================
@@ -605,60 +607,7 @@ function createBot() {
 
             bot.chat('🛑 Combat stopped.')
         }
-        // =========================
-        // MINE COMMAND
-        // =========================
 
-        if (message.startsWith('!mine ')) {
-
-            const blockName = message.split(' ')[1]
-
-            if (!blockName) {
-
-                bot.chat('❌ Specify block.')
-
-                return
-            }
-
-            const mcData = minecraftData(bot.version)
-
-            const blockType = mcData.blocksByName[blockName]
-
-            if (!blockType) {
-
-                bot.chat('❌ Invalid block.')
-
-                return
-            }
-
-            bot.chat(`⛏️ Searching for ${blockName}...`)
-
-            const block = bot.findBlock({
-
-                matching: blockType.id,
-                maxDistance: 128
-            })
-
-            if (!block) {
-
-                bot.chat(`❌ No ${blockName} nearby.`)
-
-                return
-            }
-
-            try {
-
-                await bot.collectBlock.collect(block)
-
-                bot.chat(`✅ Mined ${blockName}`)
-
-            } catch (err) {
-
-                bot.chat(`❌ Failed to mine ${blockName}`)
-
-                console.log(err)
-            }
-        }
         // =========================
         // FOLLOW
         // =========================
@@ -718,45 +667,7 @@ function createBot() {
 
             bot.chat('🦘 Jumped!')
         }
-        // =========================
-        // DROP COMMAND
-        // =========================
 
-        if (message.startsWith('!drop ')) {
-
-            const itemName = message.split(' ')[1]
-
-            if (!itemName) {
-
-                bot.chat('❌ Specify item.')
-
-                return
-            }
-
-            const item = bot.inventory.items().find(i =>
-                i.name.includes(itemName)
-            )
-
-            if (!item) {
-
-                bot.chat(`❌ No ${itemName} found.`)
-
-                return
-            }
-
-            try {
-
-                await bot.tossStack(item)
-
-                bot.chat(`📦 Dropped ${item.name}`)
-
-            } catch (err) {
-
-                bot.chat('❌ Failed to drop item.')
-
-                console.log(err)
-            }
-        }
         // =========================
         // ADD FRIEND
         // =========================
@@ -994,11 +905,8 @@ function createBot() {
             const nearOwner =
                 entity.position.distanceTo(owner.position) <= 5
 
-            // Arrow near bot
-            const nearBot =
-                entity.position.distanceTo(bot.entity.position) <= 5
 
-            if (!nearOwner && !nearBot) return
+            if (!nearOwner) return
 
             // Find nearby skeleton
             const skeleton = bot.nearestEntity(e => {
@@ -1019,70 +927,7 @@ function createBot() {
             console.log('🏹 Skeleton detected')
 
             attackTarget(skeleton)
-        })// =========================
-        // STORE COMMAND
-        // =========================
-
-        if (message === '!store') {
-
-            try {
-
-                const chestBlock = bot.findBlock({
-
-                    matching: block =>
-                        block.name.includes('chest'),
-
-                    maxDistance: 32
-                })
-
-                if (!chestBlock) {
-
-                    bot.chat('❌ No chest nearby.')
-
-                    return
-                }
-
-                bot.chat('📦 Storing items...')
-
-                const chest = await bot.openContainer(chestBlock)
-
-                const items = bot.inventory.items()
-
-                for (const item of items) {
-
-                    // Keep sword
-                    if (item.name.includes('sword')) continue
-
-                    // Keep armor
-                    if (
-                        item.name.includes('helmet') ||
-                        item.name.includes('chestplate') ||
-                        item.name.includes('leggings') ||
-                        item.name.includes('boots')
-                    ) continue
-
-                    try {
-
-                        await chest.deposit(
-                            item.type,
-                            null,
-                            item.count
-                        )
-
-                    } catch { }
-                }
-
-                chest.close()
-
-                bot.chat('✅ Stored inventory.')
-
-            } catch (err) {
-
-                bot.chat('❌ Failed to store items.')
-
-                console.log(err)
-            }
-        }
+        })
         // =========================
         // GOD MODE TOGGLE
         // =========================
