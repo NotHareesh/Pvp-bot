@@ -852,8 +852,8 @@ function createBot() {
 
         setInterval(() => {
 
-            // If bot is already in PvP combat or going home, do nothing
-            if (bot.pvp.target || isGoingHome) return
+            // If bot is already in PvP combat, actively targeting something, or going home, do nothing
+            if (bot.pvp.target || currentTarget || isGoingHome) return
 
             // Guard base if patrolMode is active
             if (patrolMode && homePosition) {
