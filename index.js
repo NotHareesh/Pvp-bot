@@ -139,7 +139,14 @@ function createBot() {
         'painting', 'boat', 'minecart',
     ]
 
-    function isValidEnemy(entity) {
+    function getPlayerEntity(name) {
+        if (!name) return null
+        const lowerName = name.toLowerCase()
+        const player = Object.values(bot.players).find(p => p.username && p.username.toLowerCase() === lowerName)
+        return player ? player.entity : null
+    }
+
+    function isValidEnemy(entity, allowPassive = false) {
 
         if (!entity) return false
 
@@ -167,14 +174,14 @@ function createBot() {
         ) return false
 
         // Ignore passive / non-hostile mobs (fish, animals, villagers, etc.)
-        if (passiveMobs.includes(entity.name)) return false
+        if (!allowPassive && passiveMobs.includes(entity.name)) return false
 
         return true
     }
 
-    function attackTarget(target) {
+    function attackTarget(target, allowPassive = false) {
 
-        if (!isValidEnemy(target)) return
+        if (!isValidEnemy(target, allowPassive)) return
 
         currentTarget = target
 
@@ -690,7 +697,7 @@ function createBot() {
 
             // Determine who to protect: protectPlayer if set, otherwise owner
             const protectName = protectPlayer || OWNER
-            const protectedEntity = bot.players[protectName]?.entity
+            const protectedEntity = getPlayerEntity(protectName)
 
             if (!protectedEntity) return
 
@@ -747,7 +754,7 @@ function createBot() {
 
             // Assist whoever we're protecting: protectPlayer if set, otherwise owner
             const assistName = protectPlayer || OWNER
-            if (entity.username !== assistName) return
+            if (!entity.username || entity.username.toLowerCase() !== assistName.toLowerCase()) return
 
             // Debounce: only react once every 2 seconds
             const now = Date.now()
@@ -763,7 +770,7 @@ function createBot() {
             // Find nearest entity near the protected player
             const target = bot.nearestEntity(e => {
 
-                if (!isValidEnemy(e)) return false
+                if (!isValidEnemy(e, true)) return false
 
                 // Must be VERY close to them
                 return (
@@ -781,7 +788,7 @@ function createBot() {
                 )
                 lastWolfAssistMsg = now
             }
-            attackTarget(target)
+            attackTarget(target, true)
         })
         // =========================
         // SHIELD AI
@@ -912,7 +919,7 @@ function createBot() {
         setInterval(() => {
 
             const followName = protectPlayer || OWNER
-            const targetEntity = bot.players[followName]?.entity
+            const targetEntity = getPlayerEntity(followName)
 
             if (!targetEntity) return
 
@@ -1109,7 +1116,7 @@ function createBot() {
             patrolMode = false
 
             const followName = protectPlayer || username
-            const target = bot.players[followName]?.entity
+            const target = getPlayerEntity(followName)
 
             if (!target) {
 
@@ -1433,7 +1440,7 @@ function createBot() {
         if (message === '!come') {
 
             const comeName = protectPlayer || username
-            const target = bot.players[comeName]?.entity
+            const target = getPlayerEntity(comeName)
 
             if (!target) {
                 bot.chat('❌ Cannot find you.')
