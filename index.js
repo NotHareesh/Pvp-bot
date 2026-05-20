@@ -1182,6 +1182,12 @@ function createBot() {
             }
 
             bot.chat('🔄 Anti-AFK mode enabled.')
+            
+            // Stop current actions, enable god mode, and start patrol
+            bot.emit('chat', username, '!stop')
+            if (!godMode) bot.emit('chat', username, '!god')
+            if (homePosition) bot.emit('chat', username, '!patrol on')
+
             bot.chat(`/gamemode creative ${bot.username}`)
 
             antiAfkInterval = setInterval(() => {
@@ -1220,6 +1226,7 @@ function createBot() {
             antiAfkInterval = null
 
             bot.chat('🛑 Anti-AFK mode disabled.')
+            if (godMode) bot.emit('chat', username, '!god')
             bot.chat(`/gamemode survival ${bot.username}`)
         }
 
