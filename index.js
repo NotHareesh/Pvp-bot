@@ -8,11 +8,12 @@ let guardMode = false
 let rawdata = fs.readFileSync('config.json')
 let data = JSON.parse(rawdata)
 let currentTarget = null
-let isMining = false
+
 let antiAfkInterval = null
 let followMode = 'close'
 let homePosition = null
 let patrolMode = false
+let isGoingHome = false
 const app = express()
 
 // =========================
@@ -24,9 +25,42 @@ function logToOwner(bot, msg) {
 }
 const OWNER = 'SilverSurfer915'
 
-const FRIENDS = [
-    OWNER
-]
+// =========================
+// PERSISTENT DATA
+// =========================
+
+const BOT_DATA_FILE = 'botdata.json'
+
+function loadBotData() {
+    try {
+        if (fs.existsSync(BOT_DATA_FILE)) {
+            const raw = fs.readFileSync(BOT_DATA_FILE)
+            return JSON.parse(raw)
+        }
+    } catch (err) {
+        console.log('⚠️ Failed to load botdata.json, using defaults')
+    }
+    return { friends: [OWNER], home: null }
+}
+
+function saveBotData() {
+    const saveData = {
+        friends: FRIENDS,
+        home: homePosition ? { x: homePosition.x, y: homePosition.y, z: homePosition.z } : null
+    }
+    try {
+        fs.writeFileSync(BOT_DATA_FILE, JSON.stringify(saveData, null, 2))
+    } catch (err) {
+        console.log('⚠️ Failed to save botdata.json')
+    }
+}
+
+const botData = loadBotData()
+const FRIENDS = botData.friends
+if (botData.home) {
+    homePosition = { x: botData.home.x, y: botData.home.y, z: botData.home.z }
+    // Will be converted to a proper Vec3 after bot spawns
+}
 
 let death = 0
 let lastProtectMessage = 0
@@ -44,6 +78,8 @@ function createBot() {
         username: data.name,
         auth: 'offline'
     })
+
+    let defaultMove = null
 
     // =========================
     // LOAD PLUGINS
@@ -96,6 +132,13 @@ function createBot() {
             `⚔️ Attacking ${target.name || target.username}`
         )
 
+        // Stop any active navigation/patrol so mineflayer-pvp has full pathfinding control
+        try {
+            bot.pathfinder.setGoal(null)
+        } catch (err) {
+            // Ignore pathfinder errors
+        }
+
         // Sprint attacks
         bot.setControlState('sprint', true)
 
@@ -139,7 +182,14 @@ function createBot() {
 
         const mcData = minecraftData(bot.version)
 
-        const defaultMove = new Movements(bot, mcData)
+        // Convert loaded home position to Vec3
+        if (homePosition && typeof homePosition.x === 'number') {
+            const { Vec3 } = require('vec3')
+            homePosition = new Vec3(homePosition.x, homePosition.y, homePosition.z)
+            console.log(`🏠 Loaded home: X:${Math.round(homePosition.x)} Y:${Math.round(homePosition.y)} Z:${Math.round(homePosition.z)}`)
+        }
+
+        defaultMove = new Movements(bot, mcData)
         // =========================
         // AUTO STORE
         // =========================
@@ -203,7 +253,7 @@ function createBot() {
         // PATHFINDER SETTINGS
         // =========================
 
-        defaultMove.canDig = true
+        defaultMove.canDig = false
 
         defaultMove.allowParkour = true
 
@@ -212,11 +262,11 @@ function createBot() {
         defaultMove.allowSprinting = true
         defaultMove.canSprint = true
 
-        // Allow block placing
+        // Allow block placing for scaffolding
         defaultMove.placeCost = 1
 
-        // Avoid digging
-        defaultMove.digCost = 99
+        // Digging disabled by default (only enabled during mining)
+        defaultMove.digCost = 100
 
         // Safer movement
         defaultMove.maxDropDown = 3
@@ -229,6 +279,16 @@ function createBot() {
         ]
 
         bot.pathfinder.setMovements(defaultMove)
+
+        // Disable digging in PVP's own movements too
+        bot.pvp.movements.canDig = false
+
+        // Restore our movements after combat ends
+        bot.on('stoppedAttacking', () => {
+            defaultMove.canDig = false
+            bot.pathfinder.setMovements(defaultMove)
+        })
+
         bot.chat('🤖 AI Combat Bot Online')
 
         // =========================
@@ -271,28 +331,7 @@ function createBot() {
 
         }, 5000)
 
-        // =========================
-        // AUTO EQUIP SWORD
-        // =========================
 
-        setInterval(() => {
-
-            const sword = bot.inventory.items().find(item =>
-                item.name.includes('netherite_sword') ||
-                item.name.includes('diamond_sword') ||
-                item.name.includes('iron_sword')
-            )
-
-            if (!sword) return
-
-            if (
-                bot.heldItem &&
-                bot.heldItem.name === sword.name
-            ) return
-
-            bot.equip(sword, 'hand').catch(() => { })
-
-        }, 3000)
         // =========================
         // AUTO EQUIP BEST TOOLS
         // =========================
@@ -339,24 +378,23 @@ function createBot() {
 
                 // Combat = sword
                 if (bot.pvp.target && sword) {
-
-                    await bot.equip(sword, 'hand')
-
+                    if (!bot.heldItem || bot.heldItem.name !== sword.name) {
+                        await bot.equip(sword, 'hand')
+                    }
                     return
                 }
 
-                // Mining = pickaxe
-                if (isMining && pickaxe) {
 
-                    await bot.equip(pickaxe, 'hand')
 
-                    return
-                }
-
-                // Default axe fallback
-                if (axe) {
-
-                    await bot.equip(axe, 'hand')
+                // Default fallback: sword first, then axe
+                if (sword) {
+                    if (!bot.heldItem || bot.heldItem.name !== sword.name) {
+                        await bot.equip(sword, 'hand')
+                    }
+                } else if (axe) {
+                    if (!bot.heldItem || bot.heldItem.name !== axe.name) {
+                        await bot.equip(axe, 'hand')
+                    }
                 }
 
             } catch { }
@@ -449,6 +487,69 @@ function createBot() {
                 console.log('❌ Pearl escape failed')
             }
         })
+
+        // =========================
+        // AUTO SWIM
+        // =========================
+
+        let wasInWater = false
+
+        bot.on('physicsTick', () => {
+            if (!bot.entity || !bot.entity.position) return
+
+            const feetBlock = bot.blockAt(bot.entity.position)
+            const headBlock = bot.blockAt(bot.entity.position.offset(0, 1, 0))
+            const isFeetWater = feetBlock && (feetBlock.name.includes('water') || feetBlock.name.includes('bubble_column'))
+            const isHeadWater = headBlock && (headBlock.name.includes('water') || headBlock.name.includes('bubble_column'))
+
+            const inWater = !!(isFeetWater || isHeadWater)
+
+            if (inWater) {
+                bot.setControlState('jump', true)
+                wasInWater = true
+            } else if (wasInWater) {
+                bot.setControlState('jump', false)
+                wasInWater = false
+            }
+        })
+
+        // =========================
+        // AUTO OPEN DOORS
+        // =========================
+
+        let lastDoorOpen = 0
+
+        bot.on('physicsTick', () => {
+            if (!bot.entity) return
+
+            const now = Date.now()
+            if (now - lastDoorOpen < 1000) return // 1s cooldown
+
+            // Check blocks at feet and head level in the direction the bot is moving
+            const pos = bot.entity.position
+            const yaw = bot.entity.yaw
+
+            // Check 1 block ahead in the direction the bot is facing
+            const dx = -Math.sin(yaw)
+            const dz = -Math.cos(yaw)
+            const frontPos = pos.offset(dx, 0, dz)
+
+            for (const checkPos of [frontPos, frontPos.offset(0, 1, 0)]) {
+                const block = bot.blockAt(checkPos)
+                if (!block) continue
+
+                if (block.name.includes('door') && !block.name.includes('trapdoor')) {
+                    // Check if door is closed (open property = false or 'false')
+                    const isOpen = block.getProperties?.()?.open
+                    if (isOpen === false || isOpen === 'false') {
+                        bot.activateBlock(block).catch(() => {})
+                        lastDoorOpen = now
+                        break
+                    }
+                }
+            }
+        })
+
         // (Helper functions isValidEnemy and attackTarget moved to top-level of createBot for proper scoping)
 
         // =========================
@@ -493,6 +594,9 @@ function createBot() {
             // Owner got hit
             if (entity !== owner) return
 
+            // If patrolMode is active and owner is far away, ignore!
+            if (patrolMode && homePosition && owner.position.distanceTo(homePosition) > 20) return
+
             const attacker = bot.nearestEntity(e => {
 
                 if (!isValidEnemy(e)) return false
@@ -527,6 +631,9 @@ function createBot() {
             if (!entity) return
 
             if (entity.username !== OWNER) return
+
+            // If patrolMode is active and owner is far away, ignore!
+            if (patrolMode && homePosition && entity.position.distanceTo(homePosition) > 20) return
 
             // Find nearest entity near owner
             const target = bot.nearestEntity(e => {
@@ -621,48 +728,49 @@ function createBot() {
 
         setInterval(() => {
 
-            // Guard disabled
-            if (!guardMode) return
+            // If bot is already in PvP combat or going home, do nothing
+            if (bot.pvp.target || isGoingHome) return
 
-            const owner = bot.players[OWNER]?.entity
+            // Guard base if patrolMode is active
+            if (patrolMode && homePosition) {
+                // Find hostile near home position or near bot
+                const target = bot.nearestEntity(e => {
+                    if (!e || !e.isValid || !e.position) return false
+                    if (!hostileMobs.includes(e.name)) return false
 
-            if (!owner) return
+                    // Within 15 blocks of home or bot
+                    const distToHome = e.position.distanceTo(homePosition)
+                    const distToBot = e.position.distanceTo(bot.entity.position)
+                    return distToHome <= 15 || distToBot <= 15
+                })
 
-            // Already fighting
-            if (bot.pvp.target) return
+                if (target) {
+                    console.log(`🛡️ Patrol guard attacking ${target.name} near base!`)
+                    attackTarget(target)
+                    return
+                }
+            }
 
-            // Find hostile near owner
-            const target = bot.nearestEntity(e => {
+            // Normal Guard Mode (guards owner)
+            if (guardMode) {
+                const owner = bot.players[OWNER]?.entity
+                if (!owner) return
 
-                if (!e) return false
+                // If patrolMode is active and owner is far away, don't leave home to guard owner!
+                if (patrolMode && homePosition && owner.position.distanceTo(homePosition) > 20) return
 
-                if (!e.isValid) return false
+                const target = bot.nearestEntity(e => {
+                    if (!e || !e.isValid || !e.position) return false
+                    if (!hostileMobs.includes(e.name)) return false
+                    if (Math.abs(e.position.y - owner.position.y) > 3) return false
+                    return e.position.distanceTo(owner.position) <= 30
+                })
 
-                if (!e.position) return false
-
-                // Only hostile mobs
-                if (!hostileMobs.includes(e.name)) return false
-
-                // Same-ish Y level
-                if (
-                    Math.abs(
-                        e.position.y - owner.position.y
-                    ) > 3
-                ) return false
-
-                // 30 block radius
-                return (
-                    e.position.distanceTo(owner.position) <= 30
-                )
-            })
-
-            if (!target) return
-
-            console.log(
-                `🛡️ Guard attacking ${target.name}`
-            )
-
-            attackTarget(target)
+                if (target) {
+                    console.log(`🛡️ Guard attacking ${target.name} near owner!`)
+                    attackTarget(target)
+                }
+            }
 
         }, 1500)
         // =========================
@@ -675,8 +783,8 @@ function createBot() {
 
             if (!owner) return
 
-            // 'stay' mode disables automatic following
-            if (followMode === 'stay') return
+            // 'stay' mode disables automatic following, also don't follow while patrolling or going home
+            if (followMode === 'stay' || patrolMode || isGoingHome) return
 
             const distance = bot.entity.position.distanceTo(owner.position)
 
@@ -737,87 +845,25 @@ function createBot() {
         if (message === '!stop') {
 
             currentTarget = null
+            followMode = 'stay'
+            patrolMode = false
+            isGoingHome = false
 
             bot.pathfinder.setGoal(null)
             bot.pvp.stop()
-            isMining = false
-            bot.chat('🛑 Combat stopped.')
+
+            bot.chat('🛑 Combat/movement stopped.')
         }
-        // =========================
-        // AUTO MINE
-        // =========================
 
-        if (message.startsWith('!mine ')) {
 
-            const blockName = message.split(' ')[1]
-
-            if (!blockName) {
-
-                bot.chat('❌ Specify block.')
-
-                return
-            }
-
-            const mcData = minecraftData(bot.version)
-
-            const blockType = mcData.blocksByName[blockName]
-
-            if (!blockType) {
-
-                bot.chat('❌ Invalid block.')
-
-                return
-            }
-
-            isMining = true
-
-            bot.chat(`⛏️ Mining ${blockName} until stopped.`)
-
-            const mineLoop = async () => {
-
-                while (isMining) {
-
-                    try {
-
-                        const block = bot.findBlock({
-                            matching: blockType.id,
-                            maxDistance: 64
-                        })
-
-                        if (!block) {
-
-                            bot.chat(`❌ No ${blockName} nearby.`)
-
-                            isMining = false
-
-                            return
-                        }
-
-                        await bot.pathfinder.goto(
-                            new goals.GoalNear(
-                                block.position.x,
-                                block.position.y,
-                                block.position.z,
-                                1
-                            )
-                        )
-
-                        await bot.dig(block)
-
-                    } catch (err) {
-
-                        console.log(err)
-                    }
-                }
-            }
-
-            mineLoop()
-        }
         // =========================
         // FOLLOW
         // =========================
 
         if (message.startsWith('!follow')) {
+
+            isGoingHome = false
+            patrolMode = false
 
             const target = bot.players[username]?.entity
 
@@ -830,13 +876,28 @@ function createBot() {
 
             const arg = message.split(' ')[1]
 
-            if (arg === 'stay') {
+            // Toggle follow mode if no argument or argument is "toggle"
+            if (!arg || arg === 'toggle') {
+                if (followMode !== 'stay') {
+                    followMode = 'stay'
+                    bot.pathfinder.setGoal(null)
+                    bot.chat('🛑 Standing ground (follow disabled).')
+                } else {
+                    followMode = 'close'
+                    const goal = new goals.GoalFollow(target, 2)
+                    bot.pathfinder.setGoal(goal, true)
+                    bot.chat(`👣 Following ${username} (close mode, 2 blocks).`)
+                }
+                return
+            }
+
+            if (arg === 'stay' || arg === 'off') {
 
                 followMode = 'stay'
 
                 bot.pathfinder.setGoal(null)
 
-                bot.chat('🛑 Standing ground (stay mode).')
+                bot.chat('🛑 Standing ground (follow disabled).')
 
                 return
             }
@@ -851,7 +912,7 @@ function createBot() {
 
                 bot.chat(`👣 Following ${username} (loose mode, 6 blocks).`)
 
-            } else {
+            } else if (arg === 'close' || arg === 'on') {
 
                 followMode = 'close'
 
@@ -860,6 +921,8 @@ function createBot() {
                 bot.pathfinder.setGoal(goal, true)
 
                 bot.chat(`👣 Following ${username} (close mode, 2 blocks).`)
+            } else {
+                bot.chat('❌ Invalid follow mode. Use close, loose, stay, on, off, or toggle.')
             }
         }
 
@@ -921,9 +984,16 @@ function createBot() {
 
         if (message === '!sethome') {
 
-            homePosition = bot.entity.position.clone()
+            const owner = bot.players[username]?.entity
 
-            bot.chat(`🏠 Home position set to: X: ${Math.round(homePosition.x)}, Y: ${Math.round(homePosition.y)}, Z: ${Math.round(homePosition.z)}`)
+            if (owner) {
+                homePosition = owner.position.clone()
+                bot.chat(`🏠 Home position set to your position: X: ${Math.round(homePosition.x)}, Y: ${Math.round(homePosition.y)}, Z: ${Math.round(homePosition.z)}`)
+            } else {
+                homePosition = bot.entity.position.clone()
+                bot.chat(`🏠 Home position set to my position: X: ${Math.round(homePosition.x)}, Y: ${Math.round(homePosition.y)}, Z: ${Math.round(homePosition.z)}`)
+            }
+            saveBotData()
         }
 
         // =========================
@@ -940,8 +1010,44 @@ function createBot() {
             }
 
             bot.chat('🏃 Heading home...')
+            isGoingHome = true
 
-            bot.pathfinder.setGoal(new goals.GoalNear(homePosition.x, homePosition.y, homePosition.z, 1))
+            // Restore safe movements (no digging)
+            if (defaultMove) {
+                defaultMove.canDig = false
+                bot.pathfinder.setMovements(defaultMove)
+            }
+
+            const homeGoal = new goals.GoalNear(homePosition.x, homePosition.y, homePosition.z, 1)
+            bot.pathfinder.setGoal(homeGoal)
+
+            const checkInterval = setInterval(() => {
+                if (!isGoingHome) {
+                    clearInterval(checkInterval)
+                    return
+                }
+                const dist = bot.entity.position.distanceTo(homePosition)
+                if (dist <= 2.0) { // Close enough to home
+                    clearInterval(checkInterval)
+                    if (isGoingHome) {
+                        bot.chat('🏠 Arrived home!')
+                        isGoingHome = false
+                        followMode = 'stay'
+                        bot.pathfinder.setGoal(null)
+                    }
+                }
+            }, 500)
+
+            // Safety timeout after 45 seconds
+            setTimeout(() => {
+                if (isGoingHome) {
+                    clearInterval(checkInterval)
+                    bot.chat('❌ Failed to navigate home (timeout).')
+                    isGoingHome = false
+                    followMode = 'stay'
+                    bot.pathfinder.setGoal(null)
+                }
+            }, 45000)
         }
 
         // =========================
@@ -965,67 +1071,67 @@ function createBot() {
             }
 
             patrolMode = true
+            followMode = 'stay'
+            isGoingHome = false
+
+            if (defaultMove) {
+                defaultMove.canDig = false
+                bot.pathfinder.setMovements(defaultMove)
+            }
 
             bot.chat('🛡️ Base patrol mode active. Guarding surrounding area.')
 
             const patrolLoop = async () => {
 
-                const offset = [
-                    { x: 10, z: 0 },
-                    { x: 0, z: 10 },
-                    { x: -10, z: 0 },
-                    { x: 0, z: -10 }
-                ]
-
-                let postIndex = 0
+                const patrolRadius = 12 // Max distance from home
+                const minRadius = 4    // Min distance from home
 
                 while (patrolMode) {
 
                     if (!homePosition) {
-
                         patrolMode = false
-
                         return
                     }
 
-                    // Only patrol if not in combat, not mining, and still patrolling
-                    if (!bot.pvp.target && !isMining && patrolMode) {
+                    // Only patrol if not in combat
+                    if (!bot.pvp.target && patrolMode) {
 
-                        const nextPost = offset[postIndex]
-
-                        const targetX = homePosition.x + nextPost.x
-
+                        // Pick a random point within patrol radius
+                        const angle = Math.random() * Math.PI * 2
+                        const dist = minRadius + Math.random() * (patrolRadius - minRadius)
+                        const targetX = homePosition.x + Math.cos(angle) * dist
+                        const targetZ = homePosition.z + Math.sin(angle) * dist
                         const targetY = homePosition.y
-
-                        const targetZ = homePosition.z + nextPost.z
 
                         try {
 
-                            console.log(`🛡️ Patrolling to guard post ${postIndex + 1}...`)
-
                             await bot.pathfinder.goto(
-                                new goals.GoalNear(targetX, targetY, targetZ, 1)
+                                new goals.GoalNear(targetX, targetY, targetZ, 2)
                             )
 
-                            // Wait at post for 5 seconds
-                            for (let i = 0; i < 5; i++) {
+                            // Random wait at point (2-6 seconds)
+                            const waitTime = 2000 + Math.random() * 4000
 
-                                if (!patrolMode || bot.pvp.target || isMining) break
+                            // Look around while waiting (scan for threats)
+                            const scanSteps = Math.floor(waitTime / 1000)
+                            for (let i = 0; i < scanSteps; i++) {
+                                if (!patrolMode || bot.pvp.target) break
+
+                                // Randomly look in different directions
+                                const lookYaw = bot.entity.yaw + (Math.random() - 0.5) * 3
+                                const lookPitch = (Math.random() - 0.5) * 0.5
+                                bot.look(lookYaw, lookPitch, false)
 
                                 await new Promise(resolve => setTimeout(resolve, 1000))
                             }
 
-                            postIndex = (postIndex + 1) % offset.length
-
                         } catch (err) {
-
-                            postIndex = (postIndex + 1) % offset.length
-
+                            // If pathfinding fails, wait and try a different spot
                             await new Promise(resolve => setTimeout(resolve, 2000))
                         }
 
                     } else {
-
+                        // In combat, wait before resuming patrol
                         await new Promise(resolve => setTimeout(resolve, 2000))
                     }
                 }
@@ -1062,6 +1168,10 @@ function createBot() {
                 bot.chat('❌ Cannot find you.')
                 return
             }
+
+            isGoingHome = false
+            patrolMode = false
+            followMode = 'stay'
 
             const goal = new goals.GoalNear(
                 target.position.x,
@@ -1118,6 +1228,7 @@ function createBot() {
             bot.chat(`🤝 Added ${newFriend} as friend.`)
 
             console.log(`🤝 Friend added: ${newFriend}`)
+            saveBotData()
         }
         // =========================
         // REMOVE FRIEND
@@ -1155,6 +1266,7 @@ function createBot() {
             bot.chat(`🤝 Removed ${friendName} from friends.`)
 
             console.log(`🤝 Friend removed: ${friendName}`)
+            saveBotData()
         }
 
         // =========================
@@ -1164,6 +1276,28 @@ function createBot() {
         if (message === '!friends' || message === '!friend list') {
 
             bot.chat(`/msg ${OWNER} Friends: ${FRIENDS.join(', ')}`)
+        }
+
+        // =========================
+        // INVENTORY
+        // =========================
+
+        if (message === '!inventory' || message === '!inv') {
+
+            const items = bot.inventory.items()
+
+            if (items.length === 0) {
+
+                bot.chat('📦 Inventory is empty.')
+
+                return
+            }
+
+            const held = bot.heldItem ? bot.heldItem.name : 'nothing'
+
+            const list = items.map(i => `${i.name} x${i.count}`).join(', ')
+
+            bot.chat(`/msg ${OWNER} Holding: ${held}. Inventory: ${list}`)
         }
 
         // =========================
@@ -1312,7 +1446,7 @@ function createBot() {
 
             bot.chat('/msg SilverSurfer915 ===== 🤖 BOT COMMANDS =====')
 
-            bot.chat('/msg SilverSurfer915 !follow <close|loose|stay> → Follow settings')
+            bot.chat('/msg SilverSurfer915 !follow <close|loose|stay|on|off> → Follow settings/Toggle')
 
             bot.chat('/msg SilverSurfer915 !come → Come to owner')
 
@@ -1324,7 +1458,7 @@ function createBot() {
 
             bot.chat('/msg SilverSurfer915 !god → Toggle god mode')
 
-            bot.chat('/msg SilverSurfer915 !mine <block> → Mine block')
+            bot.chat('/msg SilverSurfer915 !inv → Show inventory')
 
             bot.chat('/msg SilverSurfer915 !drop <item|all> → Drop item(s)')
 
@@ -1338,7 +1472,76 @@ function createBot() {
 
             bot.chat('/msg SilverSurfer915 !patrol <on|off> → Patrol surroundings')
 
+            bot.chat('/msg SilverSurfer915 !sleep → Sleep in nearby bed')
+
+            bot.chat('/msg SilverSurfer915 !friend <add|remove|list> → Manage friends')
+
             bot.chat('/msg SilverSurfer915 =========================')
+        }
+
+        // =========================
+        // SLEEP COMMAND
+        // =========================
+
+        if (message === '!sleep') {
+
+            const bedBlock = bot.findBlock({
+                matching: block => block.name.includes('bed'),
+                maxDistance: 32
+            })
+
+            if (!bedBlock) {
+                bot.chat('❌ No bed nearby.')
+                return
+            }
+
+            // Save state before sleeping
+            const wasPatrolling = patrolMode
+            const wasFollowing = followMode !== 'stay'
+
+            try {
+                bot.chat('🛏️ Walking to bed...')
+
+                // Stop patrol while going to bed
+                patrolMode = false
+                bot.pathfinder.setGoal(null)
+
+                // Walk to the bed first
+                await bot.pathfinder.goto(
+                    new goals.GoalNear(bedBlock.position.x, bedBlock.position.y, bedBlock.position.z, 2)
+                )
+
+                await bot.sleep(bedBlock)
+                bot.chat('😴 Sleeping...')
+
+                // Auto-resume when woken up
+                bot.once('wake', () => {
+                    bot.chat('☀️ Woke up!')
+                    if (wasPatrolling && homePosition) {
+                        // Re-trigger patrol by simulating the command
+                        bot.chat('🛡️ Resuming patrol...')
+                        bot.emit('chat', OWNER, '!patrol on')
+                    } else if (wasFollowing) {
+                        followMode = 'close'
+                    }
+                })
+
+            } catch (err) {
+                const msg = err.message || String(err)
+                // Restore state if sleep failed
+                if (wasPatrolling) {
+                    bot.emit('chat', OWNER, '!patrol on')
+                }
+                if (msg.includes('day')) {
+                    bot.chat('❌ Can only sleep at night.')
+                } else if (msg.includes('monsters')) {
+                    bot.chat('❌ Monsters nearby, cannot sleep.')
+                } else if (msg.includes('too far')) {
+                    bot.chat('❌ Could not reach bed.')
+                } else {
+                    bot.chat(`❌ Cannot sleep: ${msg}`)
+                }
+            }
         }
         // =========================
         // FIGHT COMMAND
@@ -1548,6 +1751,7 @@ function createBot() {
 
     bot.on('entitySpawn', entity => {
 
+
         if (!entity) return
 
         // Detect arrows
@@ -1556,6 +1760,9 @@ function createBot() {
         const owner = bot.players[OWNER]?.entity
 
         if (!owner) return
+
+        // If patrolMode is active and owner is far away, ignore!
+        if (patrolMode && homePosition && owner.position.distanceTo(homePosition) > 20) return
 
         // Arrow near owner
         const nearOwner =
@@ -1601,25 +1808,29 @@ function createBot() {
     // AUTO EAT
     // =========================
 
-    bot.on('physicsTick', () => {
+    let isEating = false
+    setInterval(async () => {
+        if (isEating) return
+        if (!bot.inventory) return
+        if (bot.food >= 10) return
 
-        if (bot.food < 10) {
+        const food = bot.inventory.items().find(item =>
+            item.name.includes('bread') ||
+            item.name.includes('cooked_beef') ||
+            item.name.includes('cooked_porkchop') ||
+            item.name.includes('golden_apple') ||
+            item.name.includes('apple')
+        )
 
-            const food = bot.inventory.items().find(item =>
-                item.name.includes('bread') ||
-                item.name.includes('beef') ||
-                item.name.includes('porkchop') ||
-                item.name.includes('apple')
-            )
+        if (!food) return
 
-            if (food) {
-
-                bot.equip(food, 'hand')
-                    .then(() => bot.consume())
-                    .catch(() => { })
-            }
-        }
-    })
+        try {
+            isEating = true
+            await bot.equip(food, 'hand')
+            await bot.consume()
+        } catch { }
+        isEating = false
+    }, 3000)
 
     // =========================
     // EVENTS
