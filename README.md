@@ -136,7 +136,6 @@ All commands are sent via in-game chat and are **owner-only**. They can also be 
 | `!fight` | Attack all nearby hostile mobs (prioritized by threat level) |
 | `!guard on` | Enable guard mode — auto-kill hostiles near owner |
 | `!guard off` | Disable guard mode |
-| `!protect <name|off>` | Protect and assist a specific player instead of the owner |
 | `!stop` | Stop all combat, pathfinding, and movement |
 | `!god` | Toggle god mode (requires OP) |
 

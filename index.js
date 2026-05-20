@@ -15,13 +15,14 @@ let guardMode = false
 let rawdata = fs.readFileSync('config.json')
 let data = JSON.parse(rawdata)
 let currentTarget = null
+let combatInterval = null
 
 let antiAfkInterval = null
 let followMode = 'close'
 let homePosition = null
 let patrolMode = false
+let patrolRadius = 20
 let isGoingHome = false
-let protectPlayer = null  // Username of player to protect (overrides owner protection)
 const app = express()
 const server = http.createServer(app)
 const io = new SocketServer(server, {
@@ -138,6 +139,22 @@ function createBot() {
         'armor_stand', 'item_frame', 'glow_item_frame',   // decorative entities
         'painting', 'boat', 'minecart',
     ]
+
+    // Hostile mob priority
+    const priorities = {
+        creeper: 100,
+        skeleton: 90,
+        witch: 85,
+        ravager: 80,
+        pillager: 75,
+        enderman: 70,
+        spider: 60,
+        zombie: 50,
+        drowned: 50,
+        husk: 50,
+        stray: 50,
+        slime: 40
+    }
 
     function getPlayerEntity(name) {
         if (!name) return null
@@ -688,29 +705,27 @@ function createBot() {
         })
 
         // =========================
-        // PROTECT PLAYER / OWNER
+        // PROTECT OWNER
         // =========================
 
         let lastProtectDefenseTime = 0
 
         bot.on('entityHurt', entity => {
 
-            // Determine who to protect: protectPlayer if set, otherwise owner
-            const protectName = protectPlayer || OWNER
-            const protectedEntity = getPlayerEntity(protectName)
+            const owner = bot.players[OWNER]?.entity
 
-            if (!protectedEntity) return
+            if (!owner) return
 
-            // Protected player got hit
-            if (entity !== protectedEntity) return
+            // Owner got hit
+            if (entity !== owner) return
 
             // Debounce: only react once every 2 seconds
             const now = Date.now()
             if (now - lastProtectDefenseTime < 2000) return
             lastProtectDefenseTime = now
 
-            // If patrolMode is active and protected player is far away, ignore!
-            if (patrolMode && homePosition && protectedEntity.position.distanceTo(homePosition) > 20) return
+            // If patrolMode is active and owner is far away, ignore!
+            if (patrolMode && homePosition && owner.position.distanceTo(homePosition) > 20) return
 
             // Already fighting something, don't switch targets
             if (bot.pvp.target) return
@@ -719,11 +734,8 @@ function createBot() {
 
                 if (!isValidEnemy(e)) return false
 
-                // Don't attack the owner if they're hitting the protected player
-                if (e.username && e.username === OWNER) return false
-
                 return (
-                    e.position.distanceTo(protectedEntity.position) <= 6
+                    e.position.distanceTo(owner.position) <= 6
                 )
             })
 
@@ -731,8 +743,7 @@ function createBot() {
 
             if (now - lastProtectMessage > 5000) {
 
-                const label = protectPlayer ? `🛡️ Protecting ${protectPlayer}!` : `🛡️ Protecting you!`
-                logToOwner(bot, label)
+                logToOwner(bot, `🛡️ Protecting you!`)
 
                 lastProtectMessage = now
             }
@@ -750,29 +761,28 @@ function createBot() {
 
         bot.on('entitySwingArm', entity => {
 
+            // Only owner
             if (!entity) return
 
-            // Assist whoever we're protecting: protectPlayer if set, otherwise owner
-            const assistName = protectPlayer || OWNER
-            if (!entity.username || entity.username.toLowerCase() !== assistName.toLowerCase()) return
+            if (entity.username !== OWNER) return
 
             // Debounce: only react once every 2 seconds
             const now = Date.now()
             if (now - lastWolfAssistTime < 2000) return
             lastWolfAssistTime = now
 
-            // If patrolMode is active and they're far away, ignore!
+            // If patrolMode is active and owner is far away, ignore!
             if (patrolMode && homePosition && entity.position.distanceTo(homePosition) > 20) return
 
             // Already fighting something, don't switch targets
             if (bot.pvp.target) return
 
-            // Find nearest entity near the protected player
+            // Find nearest entity near owner
             const target = bot.nearestEntity(e => {
 
                 if (!isValidEnemy(e, true)) return false
 
-                // Must be VERY close to them
+                // Must be VERY close to owner
                 return (
                     e.position.distanceTo(entity.position) <= 4
                 )
@@ -784,7 +794,7 @@ function createBot() {
             if (now - lastWolfAssistMsg > 10000) {
                 logToOwner(
                     bot,
-                    `🐺 Assisting ${assistName} against ${target.name || target.username}`
+                    `🐺 Assisting against ${target.name || target.username}`
                 )
                 lastWolfAssistMsg = now
             }
@@ -868,22 +878,27 @@ function createBot() {
         setInterval(() => {
 
             // If bot is already in PvP combat, actively targeting something, or going home, do nothing
-            if (bot.pvp.target || currentTarget || isGoingHome) return
+            if (bot.pvp.target || currentTarget || isGoingHome || combatInterval) return
 
             // Guard base if patrolMode is active
             if (patrolMode && homePosition) {
-                // Find hostile near home position or near bot
-                const target = bot.nearestEntity(e => {
+                // Find highest priority hostile within patrolRadius of home position
+                const hostiles = Object.values(bot.entities).filter(e => {
                     if (!e || !e.isValid || !e.position) return false
-                    if (!hostileMobs.includes(e.name)) return false
-
-                    // Within 15 blocks of home or bot
+                    if (!priorities[e.name]) return false
+                    
                     const distToHome = e.position.distanceTo(homePosition)
-                    const distToBot = e.position.distanceTo(bot.entity.position)
-                    return distToHome <= 15 || distToBot <= 15
+                    return distToHome <= patrolRadius
                 })
 
-                if (target) {
+                if (hostiles.length > 0) {
+                    hostiles.sort((a, b) => {
+                        const priorityDiff = priorities[b.name] - priorities[a.name]
+                        if (priorityDiff !== 0) return priorityDiff
+                        return a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position)
+                    })
+
+                    const target = hostiles[0]
                     console.log(`🛡️ Patrol guard attacking ${target.name} near base!`)
                     attackTarget(target)
                     return
@@ -918,22 +933,21 @@ function createBot() {
 
         setInterval(() => {
 
-            const followName = protectPlayer || OWNER
-            const targetEntity = getPlayerEntity(followName)
+            const owner = bot.players[OWNER]?.entity
 
-            if (!targetEntity) return
+            if (!owner) return
 
             // 'stay' mode disables automatic following, also don't follow while patrolling or going home
             if (followMode === 'stay' || patrolMode || isGoingHome) return
 
-            const distance = bot.entity.position.distanceTo(targetEntity.position)
+            const distance = bot.entity.position.distanceTo(owner.position)
 
             const followDist = followMode === 'loose' ? 6 : 2
 
             // Stay close to owner
             if (distance > (followDist + 2) && !bot.pvp.target) {
 
-                const goal = new goals.GoalFollow(targetEntity, followDist)
+                const goal = new goals.GoalFollow(owner, followDist)
 
                 bot.pathfinder.setGoal(goal, true)
             }
@@ -1034,8 +1048,8 @@ function createBot() {
 
         if (username === bot.username) return
 
-        // OWNER OR PROTECTED PLAYER ONLY
-        if (username !== OWNER && username !== protectPlayer) return
+        // OWNER ONLY
+        if (username !== OWNER) return
 
         console.log(`📩 ${username}: ${message}`)
 
@@ -1073,38 +1087,16 @@ function createBot() {
             followMode = 'stay'
             patrolMode = false
             isGoingHome = false
-            protectPlayer = null
+            if (combatInterval) {
+                clearInterval(combatInterval)
+                combatInterval = null
+            }
 
             bot.pathfinder.setGoal(null)
             bot.pvp.stop()
 
             bot.chat('🛑 Combat/movement stopped.')
         }
-
-        // =========================
-        // PROTECT PLAYER
-        // =========================
-
-        if (message.startsWith('!protect')) {
-
-            const arg = message.split(' ').slice(1).join(' ').trim()
-
-            if (!arg || arg === 'off') {
-                protectPlayer = null
-                bot.chat('🛡️ Protect mode disabled. Reverting to owner protection.')
-                return
-            }
-
-            // Add the protected player to friends so the bot won't attack them
-            if (!FRIENDS.includes(arg)) {
-                FRIENDS.push(arg)
-                saveBotData()
-            }
-
-            protectPlayer = arg
-            bot.chat(`🛡️ Now protecting ${arg}. Will defend them and assist their attacks.`)
-        }
-
 
         // =========================
         // FOLLOW
@@ -1115,8 +1107,7 @@ function createBot() {
             isGoingHome = false
             patrolMode = false
 
-            const followName = protectPlayer || username
-            const target = getPlayerEntity(followName)
+            const target = bot.players[username]?.entity
 
             if (!target) {
 
@@ -1137,7 +1128,7 @@ function createBot() {
                     followMode = 'close'
                     const goal = new goals.GoalFollow(target, 2)
                     bot.pathfinder.setGoal(goal, true)
-                    bot.chat(`👣 Following ${followName} (close mode, 2 blocks).`)
+                    bot.chat(`👣 Following ${username} (close mode, 2 blocks).`)
                 }
                 return
             }
@@ -1161,7 +1152,7 @@ function createBot() {
 
                 bot.pathfinder.setGoal(goal, true)
 
-                bot.chat(`👣 Following ${followName} (loose mode, 6 blocks).`)
+                bot.chat(`👣 Following ${username} (loose mode, 6 blocks).`)
 
             } else if (arg === 'close' || arg === 'on') {
 
@@ -1171,7 +1162,7 @@ function createBot() {
 
                 bot.pathfinder.setGoal(goal, true)
 
-                bot.chat(`👣 Following ${followName} (close mode, 2 blocks).`)
+                bot.chat(`👣 Following ${username} (close mode, 2 blocks).`)
             } else {
                 bot.chat('❌ Invalid follow mode. Use close, loose, stay, on, off, or toggle.')
             }
@@ -1305,7 +1296,15 @@ function createBot() {
         // PATROL MODE TOGGLE
         // =========================
 
-        if (message === '!patrol on') {
+        if (message.startsWith('!patrol on')) {
+
+            const parts = message.split(' ')
+            if (parts.length >= 3) {
+                const r = parseInt(parts[2], 10)
+                if (!isNaN(r) && r > 0) {
+                    patrolRadius = r
+                }
+            }
 
             if (!homePosition) {
 
@@ -1336,7 +1335,6 @@ function createBot() {
             patrolGeneration++
             const myGeneration = patrolGeneration
 
-            const patrolRadius = 12
             const minRadius = 4
 
             function setNextPatrolPoint() {
@@ -1344,7 +1342,7 @@ function createBot() {
                 if (!patrolMode || myGeneration !== patrolGeneration || !homePosition) return
 
                 // Don't navigate while in combat
-                if (bot.pvp.target) {
+                if (bot.pvp.target || combatInterval) {
                     setTimeout(setNextPatrolPoint, 3000)
                     return
                 }
@@ -1439,8 +1437,7 @@ function createBot() {
 
         if (message === '!come') {
 
-            const comeName = protectPlayer || username
-            const target = getPlayerEntity(comeName)
+            const target = bot.players[username]?.entity
 
             if (!target) {
                 bot.chat('❌ Cannot find you.')
@@ -1752,8 +1749,6 @@ function createBot() {
 
             bot.chat('/msg SilverSurfer915 !sleep → Sleep in nearby bed')
 
-            bot.chat('/msg SilverSurfer915 !protect <username|off> → Protect a player')
-
             bot.chat('/msg SilverSurfer915 !friend <add|remove|list> → Manage friends')
 
             bot.chat('/msg SilverSurfer915 =========================')
@@ -1841,22 +1836,6 @@ function createBot() {
 
             bot.chat('⚔️ Area clear mode enabled.')
 
-            // Hostile mob priority
-            const priorities = {
-                creeper: 100,
-                skeleton: 90,
-                witch: 85,
-                ravager: 80,
-                pillager: 75,
-                enderman: 70,
-                spider: 60,
-                zombie: 50,
-                drowned: 50,
-                husk: 50,
-                stray: 50,
-                slime: 40
-            }
-
             // Get all nearby hostile mobs
             const hostiles = Object.values(bot.entities).filter(e => {
 
@@ -1923,12 +1902,14 @@ function createBot() {
                 attackTarget(target)
 
                 // Auto continue clearing
-                const combatInterval = setInterval(() => {
+                if (combatInterval) clearInterval(combatInterval)
+                combatInterval = setInterval(() => {
 
                     // Stop if manually stopped
                     if (!currentTarget) {
 
                         clearInterval(combatInterval)
+                        combatInterval = null
 
                         return
                     }
@@ -1964,6 +1945,7 @@ function createBot() {
                         bot.pvp.stop()
 
                         clearInterval(combatInterval)
+                        combatInterval = null
 
                         return
                     }
