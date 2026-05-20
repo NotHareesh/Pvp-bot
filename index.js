@@ -21,6 +21,7 @@ let followMode = 'close'
 let homePosition = null
 let patrolMode = false
 let isGoingHome = false
+let protectPlayer = null  // Username of player to protect (overrides owner protection)
 const app = express()
 const server = http.createServer(app)
 const io = new SocketServer(server, {
@@ -680,27 +681,29 @@ function createBot() {
         })
 
         // =========================
-        // PROTECT OWNER
+        // PROTECT PLAYER / OWNER
         // =========================
 
         let lastProtectDefenseTime = 0
 
         bot.on('entityHurt', entity => {
 
-            const owner = bot.players[OWNER]?.entity
+            // Determine who to protect: protectPlayer if set, otherwise owner
+            const protectName = protectPlayer || OWNER
+            const protectedEntity = bot.players[protectName]?.entity
 
-            if (!owner) return
+            if (!protectedEntity) return
 
-            // Owner got hit
-            if (entity !== owner) return
+            // Protected player got hit
+            if (entity !== protectedEntity) return
 
             // Debounce: only react once every 2 seconds
             const now = Date.now()
             if (now - lastProtectDefenseTime < 2000) return
             lastProtectDefenseTime = now
 
-            // If patrolMode is active and owner is far away, ignore!
-            if (patrolMode && homePosition && owner.position.distanceTo(homePosition) > 20) return
+            // If patrolMode is active and protected player is far away, ignore!
+            if (patrolMode && homePosition && protectedEntity.position.distanceTo(homePosition) > 20) return
 
             // Already fighting something, don't switch targets
             if (bot.pvp.target) return
@@ -709,8 +712,11 @@ function createBot() {
 
                 if (!isValidEnemy(e)) return false
 
+                // Don't attack the owner if they're hitting the protected player
+                if (e.username && e.username === OWNER) return false
+
                 return (
-                    e.position.distanceTo(owner.position) <= 6
+                    e.position.distanceTo(protectedEntity.position) <= 6
                 )
             })
 
@@ -718,7 +724,8 @@ function createBot() {
 
             if (now - lastProtectMessage > 5000) {
 
-                logToOwner(bot, `🛡️ Protecting you!`)
+                const label = protectPlayer ? `🛡️ Protecting ${protectPlayer}!` : `🛡️ Protecting you!`
+                logToOwner(bot, label)
 
                 lastProtectMessage = now
             }
@@ -736,28 +743,29 @@ function createBot() {
 
         bot.on('entitySwingArm', entity => {
 
-            // Only owner
             if (!entity) return
 
-            if (entity.username !== OWNER) return
+            // Assist whoever we're protecting: protectPlayer if set, otherwise owner
+            const assistName = protectPlayer || OWNER
+            if (entity.username !== assistName) return
 
             // Debounce: only react once every 2 seconds
             const now = Date.now()
             if (now - lastWolfAssistTime < 2000) return
             lastWolfAssistTime = now
 
-            // If patrolMode is active and owner is far away, ignore!
+            // If patrolMode is active and they're far away, ignore!
             if (patrolMode && homePosition && entity.position.distanceTo(homePosition) > 20) return
 
             // Already fighting something, don't switch targets
             if (bot.pvp.target) return
 
-            // Find nearest entity near owner
+            // Find nearest entity near the protected player
             const target = bot.nearestEntity(e => {
 
                 if (!isValidEnemy(e)) return false
 
-                // Must be VERY close to owner
+                // Must be VERY close to them
                 return (
                     e.position.distanceTo(entity.position) <= 4
                 )
@@ -769,7 +777,7 @@ function createBot() {
             if (now - lastWolfAssistMsg > 10000) {
                 logToOwner(
                     bot,
-                    `🐺 Assisting against ${target.name || target.username}`
+                    `🐺 Assisting ${assistName} against ${target.name || target.username}`
                 )
                 lastWolfAssistMsg = now
             }
@@ -1057,11 +1065,36 @@ function createBot() {
             followMode = 'stay'
             patrolMode = false
             isGoingHome = false
+            protectPlayer = null
 
             bot.pathfinder.setGoal(null)
             bot.pvp.stop()
 
             bot.chat('🛑 Combat/movement stopped.')
+        }
+
+        // =========================
+        // PROTECT PLAYER
+        // =========================
+
+        if (message.startsWith('!protect')) {
+
+            const arg = message.split(' ').slice(1).join(' ').trim()
+
+            if (!arg || arg === 'off') {
+                protectPlayer = null
+                bot.chat('🛡️ Protect mode disabled. Reverting to owner protection.')
+                return
+            }
+
+            // Add the protected player to friends so the bot won't attack them
+            if (!FRIENDS.includes(arg)) {
+                FRIENDS.push(arg)
+                saveBotData()
+            }
+
+            protectPlayer = arg
+            bot.chat(`🛡️ Now protecting ${arg}. Will defend them and assist their attacks.`)
         }
 
 
@@ -1708,6 +1741,8 @@ function createBot() {
             bot.chat('/msg SilverSurfer915 !patrol <on|off> → Patrol surroundings')
 
             bot.chat('/msg SilverSurfer915 !sleep → Sleep in nearby bed')
+
+            bot.chat('/msg SilverSurfer915 !protect <username|off> → Protect a player')
 
             bot.chat('/msg SilverSurfer915 !friend <add|remove|list> → Manage friends')
 
