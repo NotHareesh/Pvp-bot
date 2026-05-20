@@ -25,6 +25,14 @@ function logToOwner(bot, msg) {
 }
 const OWNER = 'SilverSurfer915'
 
+// Server command settings
+// The bot will accept commands from the Minecraft server console/command blocks
+// Server can use: /say !command  OR  /msg BotName !command  OR  /tellraw @a {"text":"!command"}
+// If SERVER_CMD_PREFIX is set (e.g. '!bot'), server uses: /say !bot stop  (maps to !stop)
+// If empty, server just uses normal ! commands: /say !stop
+const SERVER_CMD_PREFIX = ''  // Set to '!bot' to require e.g. '/say !bot stop'
+const ALLOW_SERVER_COMMANDS = true
+
 // =========================
 // PERSISTENT DATA
 // =========================
@@ -800,6 +808,91 @@ function createBot() {
 
         }, 3000)
     })
+
+    // =========================
+    // SERVER COMMAND LISTENER
+    // =========================
+    // Detects commands from the Minecraft server console,
+    // command blocks, and server plugins.
+    // Server can send commands via:
+    //   /say !stop           → bot receives "[Server] !stop"
+    //   /msg BotName !stop   → bot receives private message
+    //   Command blocks       → bot receives the output
+    //
+    // Supported server name patterns:
+    //   [Server], Server, CONSOLE, [CONSOLE], RCON, [Rcon]
+
+    if (ALLOW_SERVER_COMMANDS) {
+        bot.on('message', (jsonMsg, position) => {
+            const fullText = jsonMsg.toString().trim()
+            if (!fullText) return
+
+            // Skip messages from the bot itself
+            if (fullText.includes(bot.username + ':') || fullText.startsWith(`<${bot.username}>`)) return
+
+            // Detect server-originated messages
+            // Common patterns: "[Server] !command", "[CONSOLE] !command", etc.
+            const serverPatterns = [
+                /^\[Server\]\s+(.+)$/i,
+                /^\[CONSOLE\]\s+(.+)$/i,
+                /^\[Rcon\]\s+(.+)$/i,
+                /^Server:\s+(.+)$/i,
+                /^CONSOLE:\s+(.+)$/i,
+            ]
+
+            let serverMessage = null
+
+            for (const pattern of serverPatterns) {
+                const match = fullText.match(pattern)
+                if (match) {
+                    serverMessage = match[1].trim()
+                    break
+                }
+            }
+
+            // Also detect whisper/msg from server to bot
+            // Pattern: "Server whispers to you: !command" or "Server whispers: !command"
+            if (!serverMessage) {
+                const whisperPatterns = [
+                    /^(?:Server|CONSOLE)\s+whispers?\s+(?:to you:\s*)?(.+)$/i,
+                    /^\[Server\]\s*→\s*(?:you:\s*)?(.+)$/i,
+                ]
+                for (const pattern of whisperPatterns) {
+                    const match = fullText.match(pattern)
+                    if (match) {
+                        serverMessage = match[1].trim()
+                        break
+                    }
+                }
+            }
+
+            if (!serverMessage) return
+
+            // Handle SERVER_CMD_PREFIX if configured
+            let command = serverMessage
+            if (SERVER_CMD_PREFIX) {
+                if (serverMessage.toLowerCase().startsWith(SERVER_CMD_PREFIX.toLowerCase())) {
+                    // Strip the prefix and add '!' if needed
+                    command = serverMessage.slice(SERVER_CMD_PREFIX.length).trim()
+                    if (!command.startsWith('!')) {
+                        command = '!' + command
+                    }
+                } else {
+                    // Message doesn't match our prefix, ignore
+                    return
+                }
+            }
+
+            // Only process messages that look like commands
+            if (!command.startsWith('!')) return
+
+            console.log(`🖥️ Server command received: ${command}`)
+            // Emit as if owner typed it, so the chat handler processes it
+            bot.emit('chat', OWNER, command)
+        })
+
+        console.log('🖥️ Server command listener enabled')
+    }
 
     // =========================
     // CHAT COMMANDS
