@@ -1,7 +1,7 @@
 {
 	"ip": "gcboys.aternos.me",
 	"port": 30730,
-	"name": "Henchman2",
+	"name": "Henchman",
 	"auto-night-skip": "true",
 	"login-enabled": "false",
 	"register-cmd": "/register MR_MR121 MR_MR121",
