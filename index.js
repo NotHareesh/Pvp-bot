@@ -1573,10 +1573,16 @@ function createBot() {
             }
 
             const held = bot.heldItem ? bot.heldItem.name : 'nothing'
-
             const list = items.map(i => `${i.name} x${i.count}`).join(', ')
 
-            bot.chat(`/msg ${OWNER} Holding: ${held}. Inventory: ${list}`)
+            bot.chat(`/msg ${OWNER} Holding: ${held}.`)
+
+            // Split into chunks of ~200 chars to avoid chat limits
+            const chunks = list.match(/.{1,200}(?:, |$)/g) || [list]
+            
+            for (const chunk of chunks) {
+                bot.chat(`/msg ${OWNER} Inv: ${chunk}`)
+            }
         }
 
         // =========================
@@ -1663,6 +1669,11 @@ function createBot() {
                     return
                 }
 
+                if (chestBlock.position.distanceTo(bot.entity.position) > 3) {
+                    bot.chat('🚶 Walking to chest...')
+                    await bot.pathfinder.goto(new goals.GoalNear(chestBlock.position.x, chestBlock.position.y, chestBlock.position.z, 2))
+                }
+
                 bot.chat('📦 Accessing chest to store inventory.')
 
                 const chest = await bot.openContainer(chestBlock)
@@ -1682,7 +1693,10 @@ function createBot() {
                         item.name.includes('chestplate') ||
                         item.name.includes('leggings') ||
                         item.name.includes('boots') ||
-                        item.name.includes('totem')
+                        item.name.includes('totem') ||
+                        item.name.includes('shield') ||
+                        item.name.includes('bow') ||
+                        item.name.includes('arrow')
                     ) continue
 
                     try {
