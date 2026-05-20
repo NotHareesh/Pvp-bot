@@ -3,6 +3,10 @@ const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const pvp = require('mineflayer-pvp').plugin
 const minecraftData = require('minecraft-data')
 const fs = require('fs')
+
+// Patrol generation counter — incremented every time patrol starts/stops
+// so stale loops can detect they've been superseded and exit cleanly
+let patrolGeneration = 0
 const express = require('express')
 const http = require('http')
 const path = require('path')
@@ -707,8 +711,11 @@ function createBot() {
 
         setInterval(async () => {
 
-            // Need active combat
-            if (!bot.pvp.target) return
+            // Need active combat with a valid, nearby target
+            const pvpTarget = bot.pvp.target
+            if (!pvpTarget) return
+            if (!pvpTarget.isValid || !pvpTarget.position) return
+            if (pvpTarget.position.distanceTo(bot.entity.position) > 6) return
 
             const shield = bot.inventory.items().find(item =>
                 item.name.includes('shield')
@@ -1213,63 +1220,88 @@ function createBot() {
 
             bot.chat('🛡️ Base patrol mode active. Guarding surrounding area.')
 
-            const patrolLoop = async () => {
+            // Increment generation so any previous patrol loop exits
+            patrolGeneration++
+            const myGeneration = patrolGeneration
 
-                const patrolRadius = 12 // Max distance from home
-                const minRadius = 4    // Min distance from home
+            const patrolRadius = 12
+            const minRadius = 4
 
-                while (patrolMode) {
+            function setNextPatrolPoint() {
+                // If this patrol instance has been superseded or patrol turned off, stop
+                if (!patrolMode || myGeneration !== patrolGeneration || !homePosition) return
 
-                    if (!homePosition) {
-                        patrolMode = false
-                        return
-                    }
+                // Don't navigate while in combat
+                if (bot.pvp.target) {
+                    setTimeout(setNextPatrolPoint, 3000)
+                    return
+                }
 
-                    // Only patrol if not in combat
-                    if (!bot.pvp.target && patrolMode) {
+                // Pick a random point within patrol radius (XZ only, let pathfinder handle Y)
+                const angle = Math.random() * Math.PI * 2
+                const dist = minRadius + Math.random() * (patrolRadius - minRadius)
+                const targetX = homePosition.x + Math.cos(angle) * dist
+                const targetZ = homePosition.z + Math.sin(angle) * dist
 
-                        // Pick a random point within patrol radius
-                        const angle = Math.random() * Math.PI * 2
-                        const dist = minRadius + Math.random() * (patrolRadius - minRadius)
-                        const targetX = homePosition.x + Math.cos(angle) * dist
-                        const targetZ = homePosition.z + Math.sin(angle) * dist
-                        const targetY = homePosition.y
-
-                        try {
-
-                            await bot.pathfinder.goto(
-                                new goals.GoalNear(targetX, targetY, targetZ, 2)
-                            )
-
-                            // Random wait at point (2-6 seconds)
-                            const waitTime = 2000 + Math.random() * 4000
-
-                            // Look around while waiting (scan for threats)
-                            const scanSteps = Math.floor(waitTime / 1000)
-                            for (let i = 0; i < scanSteps; i++) {
-                                if (!patrolMode || bot.pvp.target) break
-
-                                // Randomly look in different directions
-                                const lookYaw = bot.entity.yaw + (Math.random() - 0.5) * 3
-                                const lookPitch = (Math.random() - 0.5) * 0.5
-                                bot.look(lookYaw, lookPitch, false)
-
-                                await new Promise(resolve => setTimeout(resolve, 1000))
-                            }
-
-                        } catch (err) {
-                            // If pathfinding fails, wait and try a different spot
-                            await new Promise(resolve => setTimeout(resolve, 2000))
-                        }
-
-                    } else {
-                        // In combat, wait before resuming patrol
-                        await new Promise(resolve => setTimeout(resolve, 2000))
-                    }
+                try {
+                    const goal = new goals.GoalNear(targetX, homePosition.y, targetZ, 2)
+                    bot.pathfinder.setGoal(goal, false)
+                } catch (err) {
+                    console.log('⚠️ Patrol pathfinding error, retrying...')
+                    setTimeout(setNextPatrolPoint, 3000)
                 }
             }
 
-            patrolLoop()
+            // When pathfinder reaches the patrol point, scan and then pick the next one
+            function onGoalReached() {
+                if (!patrolMode || myGeneration !== patrolGeneration) {
+                    bot.removeListener('goal_reached', onGoalReached)
+                    return
+                }
+
+                // Look around at the patrol point (scan for threats), then move to next
+                let scansLeft = 2 + Math.floor(Math.random() * 3) // 2-4 scans
+                const scanInterval = setInterval(() => {
+                    if (!patrolMode || myGeneration !== patrolGeneration || bot.pvp.target) {
+                        clearInterval(scanInterval)
+                        if (patrolMode && myGeneration === patrolGeneration) {
+                            setTimeout(setNextPatrolPoint, 1000)
+                        }
+                        return
+                    }
+
+                    scansLeft--
+                    const lookYaw = bot.entity.yaw + (Math.random() - 0.5) * 3
+                    const lookPitch = (Math.random() - 0.5) * 0.5
+                    bot.look(lookYaw, lookPitch, false)
+
+                    if (scansLeft <= 0) {
+                        clearInterval(scanInterval)
+                        setTimeout(setNextPatrolPoint, 500)
+                    }
+                }, 1200)
+            }
+
+            // Clean up any previous listener before adding a new one
+            bot.removeAllListeners('goal_reached')
+            bot.on('goal_reached', onGoalReached)
+
+            // Also handle pathfinding failure (path_reset fires when pathfinder gives up)
+            function onPathUpdate(result) {
+                if (!patrolMode || myGeneration !== patrolGeneration) {
+                    bot.removeListener('path_update', onPathUpdate)
+                    return
+                }
+                if (result.status === 'noPath' || result.status === 'timeout') {
+                    console.log(`⚠️ Patrol path ${result.status}, picking new point...`)
+                    setTimeout(setNextPatrolPoint, 2000)
+                }
+            }
+            bot.removeAllListeners('path_update')
+            bot.on('path_update', onPathUpdate)
+
+            // Start the first patrol point
+            setNextPatrolPoint()
         }
 
         if (message === '!patrol off') {
@@ -1282,6 +1314,7 @@ function createBot() {
             }
 
             patrolMode = false
+            patrolGeneration++ // Invalidate the active patrol loop
 
             bot.pathfinder.setGoal(null)
 
