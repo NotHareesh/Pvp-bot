@@ -1,0 +1,1783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Henchman — Bot Dashboard</title>
+    <meta name="description" content="Real-time web dashboard for controlling and monitoring the Henchman Minecraft combat bot.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        /* ===========================
+           RESET & BASE
+           =========================== */
+        *, *::before, *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0f1117;
+            --bg-secondary: #161922;
+            --bg-card: rgba(22, 25, 34, 0.8);
+            --bg-card-hover: rgba(30, 34, 48, 0.9);
+            --border-color: rgba(255, 255, 255, 0.06);
+            --border-glow: rgba(255, 255, 255, 0.1);
+            --text-primary: #e8eaed;
+            --text-secondary: #9aa0a6;
+            --text-muted: #5f6368;
+            --health-color: #ef4444;
+            --health-bg: rgba(239, 68, 68, 0.15);
+            --food-color: #f59e0b;
+            --food-bg: rgba(245, 158, 11, 0.15);
+            --armor-color: #3b82f6;
+            --armor-bg: rgba(59, 130, 246, 0.15);
+            --xp-color: #22c55e;
+            --xp-bg: rgba(34, 197, 94, 0.15);
+            --accent-blue: #3b82f6;
+            --accent-red: #ef4444;
+            --accent-orange: #f97316;
+            --accent-green: #22c55e;
+            --accent-purple: #a855f7;
+            --accent-teal: #14b8a6;
+            --accent-indigo: #6366f1;
+            --accent-gold: #eab308;
+            --accent-pink: #ec4899;
+            --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --radius-xl: 20px;
+            --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Background gradient effect */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(ellipse at 20% 50%, rgba(59, 130, 246, 0.06) 0%, transparent 50%),
+                        radial-gradient(ellipse at 80% 20%, rgba(168, 85, 247, 0.05) 0%, transparent 50%),
+                        radial-gradient(ellipse at 50% 80%, rgba(20, 184, 166, 0.04) 0%, transparent 50%);
+            z-index: -1;
+            animation: bgShift 20s ease-in-out infinite alternate;
+        }
+
+        @keyframes bgShift {
+            0% { transform: translate(0, 0) rotate(0deg); }
+            100% { transform: translate(-2%, -2%) rotate(3deg); }
+        }
+
+        /* ===========================
+           LAYOUT
+           =========================== */
+        .app {
+            display: grid;
+            grid-template-columns: 260px 1fr 300px;
+            grid-template-rows: auto 1fr;
+            min-height: 100vh;
+            gap: 0;
+        }
+
+        /* ===========================
+           HEADER
+           =========================== */
+        .header {
+            grid-column: 1 / -1;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 24px;
+            background: rgba(22, 25, 34, 0.6);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border-color);
+            z-index: 100;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .header-logo {
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-logo .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .connection-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .connection-badge.online {
+            background: rgba(34, 197, 94, 0.1);
+            color: var(--accent-green);
+            border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+
+        .connection-badge.offline {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--accent-red);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .connection-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .online .connection-dot {
+            background: var(--accent-green);
+            box-shadow: 0 0 8px var(--accent-green);
+        }
+
+        .offline .connection-dot {
+            background: var(--accent-red);
+            box-shadow: 0 0 8px var(--accent-red);
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(0.85); }
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-server {
+            font-size: 13px;
+            color: var(--text-secondary);
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-color);
+        }
+
+        .mobile-toggle {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 4px;
+        }
+
+        /* ===========================
+           SIDEBAR
+           =========================== */
+        .sidebar {
+            background: rgba(22, 25, 34, 0.4);
+            border-right: 1px solid var(--border-color);
+            padding: 20px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            overflow-y: auto;
+        }
+
+        .bot-profile {
+            text-align: center;
+            padding: 20px 12px;
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-color);
+        }
+
+        .bot-avatar {
+            width: 80px;
+            height: 80px;
+            border-radius: var(--radius-md);
+            margin: 0 auto 12px;
+            background: linear-gradient(135deg, #2a2d3a, #1a1d28);
+            border: 2px solid var(--border-glow);
+            overflow: hidden;
+            image-rendering: pixelated;
+        }
+
+        .bot-avatar img {
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated;
+        }
+
+        .bot-name {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .bot-server-name {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        /* Mode indicators */
+        .mode-indicators {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .mode-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: var(--bg-card);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-color);
+            font-size: 13px;
+            transition: var(--transition);
+        }
+
+        .mode-indicator.active {
+            border-color: rgba(34, 197, 94, 0.3);
+            background: rgba(34, 197, 94, 0.05);
+        }
+
+        .mode-label {
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .mode-status {
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+
+        .mode-status.on {
+            color: var(--accent-green);
+            background: rgba(34, 197, 94, 0.12);
+        }
+
+        .mode-status.off {
+            color: var(--text-muted);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        /* ===========================
+           MAIN CONTENT
+           =========================== */
+        .main {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            overflow-y: auto;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-color);
+            backdrop-filter: blur(10px);
+            transition: var(--transition);
+        }
+
+        .card:hover {
+            border-color: var(--border-glow);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px 12px;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-body {
+            padding: 0 20px 20px;
+        }
+
+        /* ===========================
+           STATUS PANEL
+           =========================== */
+        .status-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .stat-bar {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .stat-bar-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .stat-bar-label {
+            font-size: 13px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .stat-bar-value {
+            font-size: 13px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .stat-bar-track {
+            height: 8px;
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .stat-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+
+        .stat-bar-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 50%;
+            background: linear-gradient(to bottom, rgba(255,255,255,0.2), transparent);
+            border-radius: 4px 4px 0 0;
+        }
+
+        .stat-bar.health .stat-bar-fill { background: linear-gradient(90deg, #dc2626, #ef4444); }
+        .stat-bar.health .stat-bar-value { color: var(--health-color); }
+
+        .stat-bar.food .stat-bar-fill { background: linear-gradient(90deg, #d97706, #f59e0b); }
+        .stat-bar.food .stat-bar-value { color: var(--food-color); }
+
+        .stat-bar.armor .stat-bar-fill { background: linear-gradient(90deg, #2563eb, #3b82f6); }
+        .stat-bar.armor .stat-bar-value { color: var(--armor-color); }
+
+        .stat-bar.xp .stat-bar-fill { background: linear-gradient(90deg, #16a34a, #22c55e); }
+        .stat-bar.xp .stat-bar-value { color: var(--xp-color); }
+
+        /* Info stats */
+        .info-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .info-stat {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-color);
+        }
+
+        .info-stat-icon {
+            font-size: 18px;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--radius-sm);
+            flex-shrink: 0;
+        }
+
+        .info-stat-content {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .info-stat-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .info-stat-value {
+            font-size: 13px;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* ===========================
+           COMMAND CENTER
+           =========================== */
+        .command-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+        }
+
+        .cmd-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 16px 8px;
+            border: 1px solid transparent;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            font-family: 'Inter', sans-serif;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cmd-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            opacity: 0;
+            transition: opacity 0.25s;
+        }
+
+        .cmd-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .cmd-btn:hover::before {
+            opacity: 1;
+        }
+
+        .cmd-btn:active {
+            transform: translateY(0) scale(0.97);
+        }
+
+        .cmd-btn-icon {
+            font-size: 24px;
+            z-index: 1;
+        }
+
+        .cmd-btn-label {
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            z-index: 1;
+        }
+
+        /* Button variants */
+        .cmd-btn.follow {
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--accent-blue);
+            border-color: rgba(59, 130, 246, 0.2);
+        }
+        .cmd-btn.follow:hover { background: rgba(59, 130, 246, 0.2); box-shadow: 0 4px 20px rgba(59, 130, 246, 0.2); }
+
+        .cmd-btn.stop {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--accent-red);
+            border-color: rgba(239, 68, 68, 0.2);
+        }
+        .cmd-btn.stop:hover { background: rgba(239, 68, 68, 0.2); box-shadow: 0 4px 20px rgba(239, 68, 68, 0.2); }
+
+        .cmd-btn.fight {
+            background: rgba(249, 115, 22, 0.1);
+            color: var(--accent-orange);
+            border-color: rgba(249, 115, 22, 0.2);
+        }
+        .cmd-btn.fight:hover { background: rgba(249, 115, 22, 0.2); box-shadow: 0 4px 20px rgba(249, 115, 22, 0.2); }
+
+        .cmd-btn.guard {
+            background: rgba(34, 197, 94, 0.1);
+            color: var(--accent-green);
+            border-color: rgba(34, 197, 94, 0.2);
+        }
+        .cmd-btn.guard:hover { background: rgba(34, 197, 94, 0.2); box-shadow: 0 4px 20px rgba(34, 197, 94, 0.2); }
+
+        .cmd-btn.patrol {
+            background: rgba(168, 85, 247, 0.1);
+            color: var(--accent-purple);
+            border-color: rgba(168, 85, 247, 0.2);
+        }
+        .cmd-btn.patrol:hover { background: rgba(168, 85, 247, 0.2); box-shadow: 0 4px 20px rgba(168, 85, 247, 0.2); }
+
+        .cmd-btn.home {
+            background: rgba(20, 184, 166, 0.1);
+            color: var(--accent-teal);
+            border-color: rgba(20, 184, 166, 0.2);
+        }
+        .cmd-btn.home:hover { background: rgba(20, 184, 166, 0.2); box-shadow: 0 4px 20px rgba(20, 184, 166, 0.2); }
+
+        .cmd-btn.sleep {
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--accent-indigo);
+            border-color: rgba(99, 102, 241, 0.2);
+        }
+        .cmd-btn.sleep:hover { background: rgba(99, 102, 241, 0.2); box-shadow: 0 4px 20px rgba(99, 102, 241, 0.2); }
+
+        .cmd-btn.god {
+            background: rgba(234, 179, 8, 0.1);
+            color: var(--accent-gold);
+            border-color: rgba(234, 179, 8, 0.2);
+        }
+        .cmd-btn.god:hover { background: rgba(234, 179, 8, 0.2); box-shadow: 0 4px 20px rgba(234, 179, 8, 0.2); }
+
+        .cmd-btn.come {
+            background: rgba(236, 72, 153, 0.1);
+            color: var(--accent-pink);
+            border-color: rgba(236, 72, 153, 0.2);
+        }
+        .cmd-btn.come:hover { background: rgba(236, 72, 153, 0.2); box-shadow: 0 4px 20px rgba(236, 72, 153, 0.2); }
+
+        .cmd-btn.afk {
+            background: rgba(148, 163, 184, 0.1);
+            color: #94a3b8;
+            border-color: rgba(148, 163, 184, 0.2);
+        }
+        .cmd-btn.afk:hover { background: rgba(148, 163, 184, 0.2); box-shadow: 0 4px 20px rgba(148, 163, 184, 0.2); }
+
+        /* Active state for toggle buttons */
+        .cmd-btn.active-mode {
+            position: relative;
+        }
+
+        .cmd-btn.active-mode::after {
+            content: '';
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            box-shadow: 0 0 6px var(--accent-green);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        /* Follow mode dropdown */
+        .follow-controls {
+            margin-top: 10px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .follow-select {
+            flex: 1;
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            cursor: pointer;
+            outline: none;
+            transition: var(--transition);
+        }
+
+        .follow-select:focus {
+            border-color: var(--accent-blue);
+        }
+
+        .follow-select option {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        /* ===========================
+           CHAT CONSOLE
+           =========================== */
+        .chat-console {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 200px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            max-height: 280px;
+            overflow-y: auto;
+            padding: 4px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .chat-messages::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .chat-messages::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .chat-messages::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+        }
+
+        .chat-msg {
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            padding: 3px 8px;
+            border-radius: 4px;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+
+        .chat-msg:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .chat-msg .timestamp {
+            color: var(--text-muted);
+            margin-right: 8px;
+            font-size: 11px;
+        }
+
+        .chat-msg.system {
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        .chat-msg.server {
+            color: var(--accent-purple);
+        }
+
+        .chat-msg.bot-msg {
+            color: var(--accent-teal);
+        }
+
+        .chat-msg.command {
+            color: var(--accent-gold);
+        }
+
+        .chat-input-wrapper {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 10px 14px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            outline: none;
+            transition: var(--transition);
+        }
+
+        .chat-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .chat-input:focus {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .chat-send-btn {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            color: white;
+            border: none;
+            border-radius: var(--radius-sm);
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .chat-send-btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        .chat-send-btn:active {
+            transform: scale(0.97);
+        }
+
+        /* ===========================
+           RIGHT SIDEBAR
+           =========================== */
+        .right-sidebar {
+            background: rgba(22, 25, 34, 0.4);
+            border-left: 1px solid var(--border-color);
+            padding: 20px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            overflow-y: auto;
+        }
+
+        /* Inventory */
+        .inventory-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+        }
+
+        .inv-slot {
+            aspect-ratio: 1;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            color: var(--text-secondary);
+            position: relative;
+            transition: var(--transition);
+            padding: 4px;
+            text-align: center;
+            overflow: hidden;
+        }
+
+        .inv-slot:hover {
+            border-color: var(--border-glow);
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .inv-slot.empty {
+            opacity: 0.3;
+        }
+
+        .inv-slot-name {
+            font-size: 9px;
+            line-height: 1.2;
+            max-height: 30px;
+            overflow: hidden;
+            word-break: break-all;
+        }
+
+        .inv-slot-count {
+            position: absolute;
+            bottom: 2px;
+            right: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-primary);
+            text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+        }
+
+        .inv-slot-icon {
+            font-size: 18px;
+            margin-bottom: 2px;
+        }
+
+        /* Friends list */
+        .friends-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .friend-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-color);
+            transition: var(--transition);
+        }
+
+        .friend-item:hover {
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .friend-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .friend-avatar {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            image-rendering: pixelated;
+        }
+
+        .friend-name {
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .friend-name.owner-tag {
+            color: var(--accent-gold);
+        }
+
+        .friend-remove {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 16px;
+            padding: 4px;
+            border-radius: 4px;
+            transition: var(--transition);
+            line-height: 1;
+        }
+
+        .friend-remove:hover {
+            color: var(--accent-red);
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .friend-add-wrapper {
+            display: flex;
+            gap: 6px;
+            margin-top: 6px;
+        }
+
+        .friend-add-input {
+            flex: 1;
+            padding: 8px 10px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            font-size: 12px;
+            outline: none;
+        }
+
+        .friend-add-input:focus {
+            border-color: var(--accent-green);
+        }
+
+        .friend-add-btn {
+            padding: 8px 12px;
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--accent-green);
+            border: 1px solid rgba(34, 197, 94, 0.2);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-size: 14px;
+            transition: var(--transition);
+        }
+
+        .friend-add-btn:hover {
+            background: rgba(34, 197, 94, 0.25);
+        }
+
+        /* ===========================
+           TOAST NOTIFICATIONS
+           =========================== */
+        .toast-container {
+            position: fixed;
+            top: 72px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .toast {
+            padding: 12px 20px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            backdrop-filter: blur(20px);
+            box-shadow: var(--shadow-lg);
+            animation: toastIn 0.3s ease-out, toastOut 0.3s ease-in 2.7s forwards;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .toast.success { border-left: 3px solid var(--accent-green); }
+        .toast.error { border-left: 3px solid var(--accent-red); }
+        .toast.info { border-left: 3px solid var(--accent-blue); }
+
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateX(40px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        @keyframes toastOut {
+            from { opacity: 1; transform: translateX(0); }
+            to { opacity: 0; transform: translateX(40px); }
+        }
+
+        /* ===========================
+           SCROLLBAR
+           =========================== */
+        .sidebar::-webkit-scrollbar,
+        .right-sidebar::-webkit-scrollbar,
+        .main::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .sidebar::-webkit-scrollbar-track,
+        .right-sidebar::-webkit-scrollbar-track,
+        .main::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb,
+        .right-sidebar::-webkit-scrollbar-thumb,
+        .main::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 2px;
+        }
+
+        /* ===========================
+           RESPONSIVE
+           =========================== */
+        @media (max-width: 1100px) {
+            .app {
+                grid-template-columns: 1fr;
+            }
+
+            .sidebar, .right-sidebar {
+                display: none;
+                position: fixed;
+                top: 57px;
+                bottom: 0;
+                z-index: 90;
+                width: 280px;
+                background: var(--bg-secondary);
+            }
+
+            .sidebar {
+                left: 0;
+            }
+
+            .right-sidebar {
+                right: 0;
+            }
+
+            .sidebar.open, .right-sidebar.open {
+                display: flex;
+            }
+
+            .mobile-toggle {
+                display: block;
+            }
+
+            .command-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+
+            .info-stats {
+                grid-template-columns: 1fr;
+            }
+
+            .header-server {
+                display: none;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .command-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .status-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .header-logo span {
+                display: none;
+            }
+        }
+
+        /* Overlay for mobile sidebar */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            top: 57px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 85;
+        }
+
+        .sidebar-overlay.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <!-- HEADER -->
+        <header class="header">
+            <div class="header-left">
+                <button class="mobile-toggle" id="toggleLeftSidebar" aria-label="Toggle sidebar">☰</button>
+                <div class="header-logo">
+                    <div class="logo-icon">⚔️</div>
+                    <span>Henchman</span>
+                </div>
+                <div class="connection-badge offline" id="connectionBadge">
+                    <div class="connection-dot"></div>
+                    <span id="connectionText">Connecting...</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="header-server" id="serverInfo">—</div>
+                <button class="mobile-toggle" id="toggleRightSidebar" aria-label="Toggle inventory">📦</button>
+            </div>
+        </header>
+
+        <!-- LEFT SIDEBAR -->
+        <aside class="sidebar" id="leftSidebar">
+            <div class="bot-profile">
+                <div class="bot-avatar">
+                    <img src="https://mc-heads.net/body/Henchman/100" alt="Bot Skin" onerror="this.style.display='none'">
+                </div>
+                <div class="bot-name" id="botName">Henchman</div>
+                <div class="bot-server-name" id="botServer">—</div>
+            </div>
+
+            <div class="mode-indicators">
+                <div class="mode-indicator" id="modeGuard">
+                    <span class="mode-label">🛡️ Guard</span>
+                    <span class="mode-status off" id="modeGuardStatus">OFF</span>
+                </div>
+                <div class="mode-indicator" id="modePatrol">
+                    <span class="mode-label">🔄 Patrol</span>
+                    <span class="mode-status off" id="modePatrolStatus">OFF</span>
+                </div>
+                <div class="mode-indicator" id="modeFollow">
+                    <span class="mode-label">👣 Follow</span>
+                    <span class="mode-status off" id="modeFollowStatus">STAY</span>
+                </div>
+                <div class="mode-indicator" id="modeGod">
+                    <span class="mode-label">😈 God Mode</span>
+                    <span class="mode-status off" id="modeGodStatus">OFF</span>
+                </div>
+                <div class="mode-indicator" id="modeAfk">
+                    <span class="mode-label">💤 Anti-AFK</span>
+                    <span class="mode-status off" id="modeAfkStatus">OFF</span>
+                </div>
+                <div class="mode-indicator" id="modeCombat">
+                    <span class="mode-label">⚔️ In Combat</span>
+                    <span class="mode-status off" id="modeCombatStatus">NO</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT -->
+        <main class="main">
+            <!-- Status Panel -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">📊 Status</div>
+                </div>
+                <div class="card-body">
+                    <div class="status-grid">
+                        <div class="stat-bar health">
+                            <div class="stat-bar-header">
+                                <span class="stat-bar-label">❤️ Health</span>
+                                <span class="stat-bar-value" id="healthValue">0/20</span>
+                            </div>
+                            <div class="stat-bar-track">
+                                <div class="stat-bar-fill" id="healthBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="stat-bar food">
+                            <div class="stat-bar-header">
+                                <span class="stat-bar-label">🍖 Food</span>
+                                <span class="stat-bar-value" id="foodValue">0/20</span>
+                            </div>
+                            <div class="stat-bar-track">
+                                <div class="stat-bar-fill" id="foodBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="stat-bar armor">
+                            <div class="stat-bar-header">
+                                <span class="stat-bar-label">🛡️ Armor</span>
+                                <span class="stat-bar-value" id="armorValue">0/20</span>
+                            </div>
+                            <div class="stat-bar-track">
+                                <div class="stat-bar-fill" id="armorBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="stat-bar xp">
+                            <div class="stat-bar-header">
+                                <span class="stat-bar-label">✨ XP Level</span>
+                                <span class="stat-bar-value" id="xpValue">0</span>
+                            </div>
+                            <div class="stat-bar-track">
+                                <div class="stat-bar-fill" id="xpBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="info-stats">
+                        <div class="info-stat">
+                            <div class="info-stat-icon" style="background: rgba(59,130,246,0.1); color: var(--accent-blue);">📍</div>
+                            <div class="info-stat-content">
+                                <span class="info-stat-label">Position</span>
+                                <span class="info-stat-value" id="positionValue">— , — , —</span>
+                            </div>
+                        </div>
+                        <div class="info-stat">
+                            <div class="info-stat-icon" style="background: rgba(239,68,68,0.1); color: var(--accent-red);">💀</div>
+                            <div class="info-stat-content">
+                                <span class="info-stat-label">Deaths</span>
+                                <span class="info-stat-value" id="deathsValue">0</span>
+                            </div>
+                        </div>
+                        <div class="info-stat">
+                            <div class="info-stat-icon" style="background: rgba(245,158,11,0.1); color: var(--accent-orange);">🗡️</div>
+                            <div class="info-stat-content">
+                                <span class="info-stat-label">Held Item</span>
+                                <span class="info-stat-value" id="heldItemValue">nothing</span>
+                            </div>
+                        </div>
+                        <div class="info-stat">
+                            <div class="info-stat-icon" style="background: rgba(34,197,94,0.1); color: var(--accent-green);">🏠</div>
+                            <div class="info-stat-content">
+                                <span class="info-stat-label">Home</span>
+                                <span class="info-stat-value" id="homeValue">Not set</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Command Center -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">🎮 Command Center</div>
+                </div>
+                <div class="card-body">
+                    <div class="command-grid">
+                        <button class="cmd-btn follow" id="btnFollow" onclick="sendCommand('!follow close')">
+                            <span class="cmd-btn-icon">👣</span>
+                            <span class="cmd-btn-label">Follow</span>
+                        </button>
+                        <button class="cmd-btn stop" id="btnStop" onclick="sendCommand('!stop')">
+                            <span class="cmd-btn-icon">🛑</span>
+                            <span class="cmd-btn-label">Stop</span>
+                        </button>
+                        <button class="cmd-btn fight" id="btnFight" onclick="sendCommand('!fight')">
+                            <span class="cmd-btn-icon">⚔️</span>
+                            <span class="cmd-btn-label">Fight</span>
+                        </button>
+                        <button class="cmd-btn guard" id="btnGuard" onclick="toggleMode('guard')">
+                            <span class="cmd-btn-icon">🛡️</span>
+                            <span class="cmd-btn-label">Guard</span>
+                        </button>
+                        <button class="cmd-btn patrol" id="btnPatrol" onclick="toggleMode('patrol')">
+                            <span class="cmd-btn-icon">🔄</span>
+                            <span class="cmd-btn-label">Patrol</span>
+                        </button>
+                        <button class="cmd-btn home" id="btnHome" onclick="sendCommand('!home')">
+                            <span class="cmd-btn-icon">🏠</span>
+                            <span class="cmd-btn-label">Home</span>
+                        </button>
+                        <button class="cmd-btn sleep" id="btnSleep" onclick="sendCommand('!sleep')">
+                            <span class="cmd-btn-icon">🛏️</span>
+                            <span class="cmd-btn-label">Sleep</span>
+                        </button>
+                        <button class="cmd-btn god" id="btnGod" onclick="sendCommand('!god')">
+                            <span class="cmd-btn-icon">👑</span>
+                            <span class="cmd-btn-label">God Mode</span>
+                        </button>
+                        <button class="cmd-btn come" id="btnCome" onclick="sendCommand('!come')">
+                            <span class="cmd-btn-icon">🏃</span>
+                            <span class="cmd-btn-label">Come</span>
+                        </button>
+                        <button class="cmd-btn afk" id="btnAfk" onclick="toggleMode('afk')">
+                            <span class="cmd-btn-icon">💤</span>
+                            <span class="cmd-btn-label">Anti-AFK</span>
+                        </button>
+                    </div>
+
+                    <div class="follow-controls">
+                        <select class="follow-select" id="followModeSelect">
+                            <option value="close">👣 Follow: Close (2 blocks)</option>
+                            <option value="loose">👣 Follow: Loose (6 blocks)</option>
+                            <option value="stay">🛑 Follow: Stay (disabled)</option>
+                        </select>
+                        <button class="chat-send-btn" onclick="setFollowMode()" style="padding: 8px 14px; font-size: 12px;">Set</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Console -->
+            <div class="card chat-console">
+                <div class="card-header">
+                    <div class="card-title">💬 Chat Console</div>
+                    <button style="background: none; border: 1px solid var(--border-color); color: var(--text-muted); padding: 4px 10px; border-radius: var(--radius-sm); cursor: pointer; font-size: 11px; font-family: inherit;" onclick="clearChat()">Clear</button>
+                </div>
+                <div class="card-body" style="display: flex; flex-direction: column; flex: 1;">
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="chat-msg system">
+                            <span class="timestamp">[--:--]</span>
+                            Dashboard connected. Waiting for bot data...
+                        </div>
+                    </div>
+                    <div class="chat-input-wrapper">
+                        <input type="text" class="chat-input" id="chatInput" placeholder="Type a command (!stop) or message (say hello)..." autocomplete="off">
+                        <button class="chat-send-btn" id="chatSendBtn" onclick="sendChatInput()">Send</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- RIGHT SIDEBAR -->
+        <aside class="right-sidebar" id="rightSidebar">
+            <!-- Inventory -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">📦 Inventory</div>
+                    <span style="font-size: 11px; color: var(--text-muted);" id="invCount">0 items</span>
+                </div>
+                <div class="card-body">
+                    <div class="inventory-grid" id="inventoryGrid">
+                        <!-- Filled dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Friends -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">🤝 Friends</div>
+                    <span style="font-size: 11px; color: var(--text-muted);" id="friendCount">0</span>
+                </div>
+                <div class="card-body">
+                    <div class="friends-list" id="friendsList">
+                        <!-- Filled dynamically -->
+                    </div>
+                    <div class="friend-add-wrapper">
+                        <input type="text" class="friend-add-input" id="friendAddInput" placeholder="Username...">
+                        <button class="friend-add-btn" id="friendAddBtn" onclick="addFriend()">+</button>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Sidebar Overlay -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- Socket.IO Client -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // ===========================
+        // STATE
+        // ===========================
+        let botState = {};
+        let modes = {};
+
+        // ===========================
+        // SOCKET.IO CONNECTION
+        // ===========================
+        const socket = io({
+            transports: ['websocket', 'polling'],
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionAttempts: Infinity
+        });
+
+        socket.on('connect', () => {
+            updateConnectionStatus(true);
+            addChatMessage('system', 'Dashboard connected to server.');
+        });
+
+        socket.on('disconnect', () => {
+            updateConnectionStatus(false);
+            addChatMessage('system', 'Dashboard disconnected from server.');
+        });
+
+        socket.on('connect_error', () => {
+            updateConnectionStatus(false);
+        });
+
+        // ===========================
+        // REAL-TIME DATA HANDLERS
+        // ===========================
+
+        // Bot status (every 1s)
+        socket.on('botState', (data) => {
+            botState = data;
+            updateStatusUI(data);
+            updateModesUI(data);
+        });
+
+        // Inventory (every 5s)
+        socket.on('inventory', (items) => {
+            updateInventoryUI(items);
+        });
+
+        // Chat messages (real-time)
+        socket.on('chatMessage', (msg) => {
+            addChatMessage(msg.type || 'chat', msg.text);
+        });
+
+        // Chat history on first connect
+        socket.on('chatHistory', (messages) => {
+            messages.forEach(msg => {
+                addChatMessage(msg.type || 'chat', msg.text, false);
+            });
+            scrollChatToBottom();
+        });
+
+        // Friends list
+        socket.on('friends', (friends) => {
+            updateFriendsUI(friends);
+        });
+
+        // Command response / toast
+        socket.on('toast', (data) => {
+            showToast(data.message, data.type || 'info');
+        });
+
+        // ===========================
+        // UI UPDATERS
+        // ===========================
+
+        function updateConnectionStatus(connected) {
+            const badge = document.getElementById('connectionBadge');
+            const text = document.getElementById('connectionText');
+            badge.className = 'connection-badge ' + (connected ? 'online' : 'offline');
+            text.textContent = connected ? 'Online' : 'Offline';
+        }
+
+        function updateStatusUI(data) {
+            // Health
+            const healthPct = Math.max(0, Math.min(100, (data.health / 20) * 100));
+            document.getElementById('healthBar').style.width = healthPct + '%';
+            document.getElementById('healthValue').textContent = `${Math.round(data.health)}/${20}`;
+
+            // Food
+            const foodPct = Math.max(0, Math.min(100, (data.food / 20) * 100));
+            document.getElementById('foodBar').style.width = foodPct + '%';
+            document.getElementById('foodValue').textContent = `${Math.round(data.food)}/${20}`;
+
+            // Armor
+            const armorMax = 20;
+            const armorPct = Math.max(0, Math.min(100, ((data.armor || 0) / armorMax) * 100));
+            document.getElementById('armorBar').style.width = armorPct + '%';
+            document.getElementById('armorValue').textContent = `${Math.round(data.armor || 0)}/${armorMax}`;
+
+            // XP
+            const xpPct = Math.max(0, Math.min(100, (data.xpProgress || 0) * 100));
+            document.getElementById('xpBar').style.width = xpPct + '%';
+            document.getElementById('xpValue').textContent = `Level ${data.xpLevel || 0}`;
+
+            // Position
+            if (data.position) {
+                document.getElementById('positionValue').textContent =
+                    `${Math.round(data.position.x)}, ${Math.round(data.position.y)}, ${Math.round(data.position.z)}`;
+            }
+
+            // Deaths
+            document.getElementById('deathsValue').textContent = data.deaths || 0;
+
+            // Held item
+            document.getElementById('heldItemValue').textContent = data.heldItem || 'nothing';
+
+            // Home
+            if (data.home) {
+                document.getElementById('homeValue').textContent =
+                    `${Math.round(data.home.x)}, ${Math.round(data.home.y)}, ${Math.round(data.home.z)}`;
+            } else {
+                document.getElementById('homeValue').textContent = 'Not set';
+            }
+
+            // Server info
+            if (data.serverIp) {
+                document.getElementById('serverInfo').textContent = data.serverIp;
+                document.getElementById('botServer').textContent = data.serverIp;
+            }
+
+            // Bot name
+            if (data.botName) {
+                document.getElementById('botName').textContent = data.botName;
+                // Update avatar
+                const avatarImg = document.querySelector('.bot-avatar img');
+                if (avatarImg) {
+                    avatarImg.src = `https://mc-heads.net/body/${data.botName}/100`;
+                }
+            }
+        }
+
+        function updateModesUI(data) {
+            modes = data;
+
+            setModeStatus('modeGuard', 'modeGuardStatus', data.guardMode, 'ON', 'OFF');
+            setModeStatus('modePatrol', 'modePatrolStatus', data.patrolMode, 'ON', 'OFF');
+            setModeStatus('modeFollow', 'modeFollowStatus', data.followMode !== 'stay', data.followMode?.toUpperCase() || 'STAY', 'STAY');
+            setModeStatus('modeGod', 'modeGodStatus', data.godMode, 'ON', 'OFF');
+            setModeStatus('modeAfk', 'modeAfkStatus', data.antiAfk, 'ON', 'OFF');
+            setModeStatus('modeCombat', 'modeCombatStatus', data.inCombat, 'YES', 'NO');
+
+            // Update button active states
+            toggleButtonActive('btnGuard', data.guardMode);
+            toggleButtonActive('btnPatrol', data.patrolMode);
+            toggleButtonActive('btnGod', data.godMode);
+            toggleButtonActive('btnAfk', data.antiAfk);
+
+            // Update follow select
+            const followSelect = document.getElementById('followModeSelect');
+            if (followSelect && data.followMode) {
+                followSelect.value = data.followMode;
+            }
+        }
+
+        function setModeStatus(indicatorId, statusId, isActive, onText, offText) {
+            const indicator = document.getElementById(indicatorId);
+            const status = document.getElementById(statusId);
+            if (!indicator || !status) return;
+
+            indicator.className = 'mode-indicator' + (isActive ? ' active' : '');
+            status.className = 'mode-status ' + (isActive ? 'on' : 'off');
+            status.textContent = isActive ? onText : offText;
+        }
+
+        function toggleButtonActive(btnId, isActive) {
+            const btn = document.getElementById(btnId);
+            if (!btn) return;
+            if (isActive) {
+                btn.classList.add('active-mode');
+            } else {
+                btn.classList.remove('active-mode');
+            }
+        }
+
+        function updateInventoryUI(items) {
+            const grid = document.getElementById('inventoryGrid');
+            const countEl = document.getElementById('invCount');
+            if (!grid) return;
+
+            countEl.textContent = `${items.length} item${items.length !== 1 ? 's' : ''}`;
+
+            // Item icon mapping
+            const iconMap = {
+                sword: '🗡️', pickaxe: '⛏️', axe: '🪓', shovel: '🪣',
+                helmet: '⛑️', chestplate: '🦺', leggings: '👖', boots: '👢',
+                bow: '🏹', arrow: '🏹', shield: '🛡️', totem: '✨',
+                apple: '🍎', bread: '🍞', beef: '🥩', porkchop: '🥓',
+                pearl: '🟣', diamond: '💎', iron: '🔩', gold: '🥇',
+                netherite: '⬛', cobblestone: '🧱', dirt: '🟫', wood: '🪵',
+                coal: '⚫', redstone: '🔴', emerald: '💚', lapis: '🔵',
+                potion: '🧪', bucket: '🪣', fishing: '🎣', trident: '🔱',
+                crossbow: '🏹', firework: '🎆', book: '📖', torch: '🔦'
+            };
+
+            function getItemIcon(name) {
+                for (const [key, icon] of Object.entries(iconMap)) {
+                    if (name.includes(key)) return icon;
+                }
+                return '📦';
+            }
+
+            let html = '';
+            // Show up to 36 slots (standard inventory)
+            const maxSlots = Math.max(items.length, 16);
+            for (let i = 0; i < maxSlots && i < 36; i++) {
+                const item = items[i];
+                if (item) {
+                    const displayName = item.name.replace(/_/g, ' ');
+                    html += `
+                        <div class="inv-slot" title="${displayName} x${item.count}">
+                            <span class="inv-slot-icon">${getItemIcon(item.name)}</span>
+                            <span class="inv-slot-name">${displayName}</span>
+                            ${item.count > 1 ? `<span class="inv-slot-count">${item.count}</span>` : ''}
+                        </div>`;
+                } else {
+                    html += `<div class="inv-slot empty"></div>`;
+                }
+            }
+            grid.innerHTML = html;
+        }
+
+        function updateFriendsUI(friends) {
+            const list = document.getElementById('friendsList');
+            const countEl = document.getElementById('friendCount');
+            if (!list) return;
+
+            countEl.textContent = friends.length;
+
+            let html = '';
+            friends.forEach(name => {
+                const isOwner = name === botState.owner;
+                html += `
+                    <div class="friend-item">
+                        <div class="friend-info">
+                            <img class="friend-avatar" src="https://mc-heads.net/avatar/${name}/28" alt="${name}" onerror="this.style.display='none'">
+                            <span class="friend-name ${isOwner ? 'owner-tag' : ''}">${name}${isOwner ? ' 👑' : ''}</span>
+                        </div>
+                        ${!isOwner ? `<button class="friend-remove" onclick="removeFriend('${name}')" title="Remove friend">✕</button>` : ''}
+                    </div>`;
+            });
+            list.innerHTML = html;
+        }
+
+        // ===========================
+        // CHAT
+        // ===========================
+
+        function addChatMessage(type, text, scroll = true) {
+            const container = document.getElementById('chatMessages');
+            if (!container) return;
+
+            const now = new Date();
+            const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+            const div = document.createElement('div');
+            div.className = `chat-msg ${type}`;
+            div.innerHTML = `<span class="timestamp">[${time}]</span> ${escapeHtml(text)}`;
+            container.appendChild(div);
+
+            // Keep max 200 messages
+            while (container.children.length > 200) {
+                container.removeChild(container.firstChild);
+            }
+
+            if (scroll) {
+                scrollChatToBottom();
+            }
+        }
+
+        function scrollChatToBottom() {
+            const container = document.getElementById('chatMessages');
+            if (container) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        function clearChat() {
+            const container = document.getElementById('chatMessages');
+            if (container) {
+                container.innerHTML = '';
+                addChatMessage('system', 'Chat cleared.');
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ===========================
+        // COMMANDS
+        // ===========================
+
+        function sendCommand(cmd) {
+            socket.emit('command', cmd);
+            addChatMessage('command', `» ${cmd}`);
+            showToast(`Sent: ${cmd}`, 'success');
+        }
+
+        function toggleMode(mode) {
+            if (mode === 'guard') {
+                sendCommand(modes.guardMode ? '!guard off' : '!guard on');
+            } else if (mode === 'patrol') {
+                sendCommand(modes.patrolMode ? '!patrol off' : '!patrol on');
+            } else if (mode === 'afk') {
+                sendCommand(modes.antiAfk ? '!afk off' : '!afk on');
+            }
+        }
+
+        function setFollowMode() {
+            const mode = document.getElementById('followModeSelect').value;
+            sendCommand(`!follow ${mode}`);
+        }
+
+        function sendChatInput() {
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if (!text) return;
+
+            if (text.startsWith('!')) {
+                // Bot command
+                sendCommand(text);
+            } else if (text.startsWith('say ')) {
+                // Raw chat message
+                socket.emit('chat', text.slice(4));
+                addChatMessage('bot-msg', `Bot says: ${text.slice(4)}`);
+            } else {
+                // Treat as command by default
+                sendCommand(text.startsWith('!') ? text : text);
+                // If it doesn't start with !, send as raw chat
+                socket.emit('chat', text);
+                addChatMessage('bot-msg', `Bot says: ${text}`);
+            }
+
+            input.value = '';
+            input.focus();
+        }
+
+        // ===========================
+        // FRIENDS
+        // ===========================
+
+        function addFriend() {
+            const input = document.getElementById('friendAddInput');
+            const name = input.value.trim();
+            if (!name) return;
+
+            socket.emit('friend-add', name);
+            input.value = '';
+            showToast(`Adding ${name} as friend...`, 'info');
+        }
+
+        function removeFriend(name) {
+            if (!confirm(`Remove ${name} from friends?`)) return;
+            socket.emit('friend-remove', name);
+            showToast(`Removing ${name} from friends...`, 'info');
+        }
+
+        // ===========================
+        // TOASTS
+        // ===========================
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+
+            const icons = { success: '✅', error: '❌', info: 'ℹ️' };
+            toast.innerHTML = `<span>${icons[type] || 'ℹ️'}</span> ${escapeHtml(message)}`;
+
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                if (toast.parentNode) toast.remove();
+            }, 3000);
+        }
+
+        // ===========================
+        // KEYBOARD
+        // ===========================
+
+        document.getElementById('chatInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                sendChatInput();
+            }
+        });
+
+        document.getElementById('friendAddInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                addFriend();
+            }
+        });
+
+        // ===========================
+        // MOBILE SIDEBAR TOGGLES
+        // ===========================
+
+        const overlay = document.getElementById('sidebarOverlay');
+
+        document.getElementById('toggleLeftSidebar').addEventListener('click', () => {
+            const sidebar = document.getElementById('leftSidebar');
+            const rightSidebar = document.getElementById('rightSidebar');
+            rightSidebar.classList.remove('open');
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('active', sidebar.classList.contains('open'));
+        });
+
+        document.getElementById('toggleRightSidebar').addEventListener('click', () => {
+            const sidebar = document.getElementById('rightSidebar');
+            const leftSidebar = document.getElementById('leftSidebar');
+            leftSidebar.classList.remove('open');
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('active', sidebar.classList.contains('open'));
+        });
+
+        overlay.addEventListener('click', () => {
+            document.getElementById('leftSidebar').classList.remove('open');
+            document.getElementById('rightSidebar').classList.remove('open');
+            overlay.classList.remove('active');
+        });
+    </script>
+</body>
+</html>

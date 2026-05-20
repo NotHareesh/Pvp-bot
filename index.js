@@ -4,6 +4,9 @@ const pvp = require('mineflayer-pvp').plugin
 const minecraftData = require('minecraft-data')
 const fs = require('fs')
 const express = require('express')
+const http = require('http')
+const path = require('path')
+const { Server: SocketServer } = require('socket.io')
 let guardMode = false
 let rawdata = fs.readFileSync('config.json')
 let data = JSON.parse(rawdata)
@@ -15,6 +18,22 @@ let homePosition = null
 let patrolMode = false
 let isGoingHome = false
 const app = express()
+const server = http.createServer(app)
+const io = new SocketServer(server, {
+    cors: { origin: '*' },
+    transports: ['websocket', 'polling']
+})
+
+// Chat message buffer for dashboard
+const chatBuffer = []
+const CHAT_BUFFER_MAX = 100
+
+function pushChatBuffer(type, text) {
+    chatBuffer.push({ type, text, timestamp: Date.now() })
+    while (chatBuffer.length > CHAT_BUFFER_MAX) chatBuffer.shift()
+    // Broadcast to all connected dashboards
+    io.emit('chatMessage', { type, text })
+}
 
 // =========================
 // SETTINGS
@@ -298,6 +317,26 @@ function createBot() {
         })
 
         bot.chat('🤖 AI Combat Bot Online')
+        pushChatBuffer('bot-msg', '🤖 AI Combat Bot Online')
+
+        // ===========================
+        // DASHBOARD CHAT FEED
+        // ===========================
+        // Forward all Minecraft chat messages to the web dashboard
+        bot.on('message', (jsonMsg, position) => {
+            const text = jsonMsg.toString().trim()
+            if (!text) return
+
+            // Classify message type for dashboard styling
+            let type = 'chat'
+            if (text.includes('[Server]') || text.includes('[CONSOLE]')) {
+                type = 'server'
+            } else if (text.includes(bot.username)) {
+                type = 'bot-msg'
+            }
+
+            pushChatBuffer(type, text)
+        })
 
         // =========================
         // AUTO EQUIP ARMOR
@@ -1992,22 +2031,176 @@ rl.on('line', (line) => {
 })
 
 // =========================
-// WEB SERVER
+// WEB SERVER + SOCKET.IO
 // =========================
 
-app.get('/', (req, res) => {
+// Serve dashboard static files
+app.use(express.static(path.join(__dirname, 'public')))
 
-    res.send(`
-    <h1>🤖 AI Combat Bot</h1>
-    <p>Status: Online</p>
-    <p>Owner: ${OWNER}</p>
-    <p>Deaths: ${death}</p>
-    <p>Server: ${data.ip}</p>
-    `)
+// Fallback API endpoint (for health checks / Coolify)
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', botName: data.name, server: data.ip })
 })
+
+// ===========================
+// SOCKET.IO EVENTS
+// ===========================
+
+io.on('connection', (socket) => {
+    console.log('🌐 Dashboard client connected')
+
+    // Send chat history to new connections
+    socket.emit('chatHistory', chatBuffer)
+
+    // Send initial friends list
+    socket.emit('friends', FRIENDS)
+
+    // --- Handle commands from dashboard ---
+    socket.on('command', (cmd) => {
+        if (!cmd || typeof cmd !== 'string') return
+        const trimmed = cmd.trim()
+        if (!trimmed) return
+
+        console.log(`🌐 Dashboard command: ${trimmed}`)
+
+        // Emit as if owner typed it in chat
+        activeBot.emit('chat', OWNER, trimmed)
+
+        pushChatBuffer('command', `[Dashboard] ${trimmed}`)
+    })
+
+    // --- Handle raw chat from dashboard ---
+    socket.on('chat', (msg) => {
+        if (!msg || typeof msg !== 'string') return
+        const trimmed = msg.trim()
+        if (!trimmed) return
+
+        console.log(`🌐 Dashboard chat: ${trimmed}`)
+        activeBot.chat(trimmed)
+
+        pushChatBuffer('bot-msg', `Bot: ${trimmed}`)
+    })
+
+    // --- Handle friend management ---
+    socket.on('friend-add', (name) => {
+        if (!name || typeof name !== 'string') return
+        const trimmed = name.trim()
+        if (!trimmed) return
+
+        // Emit as if owner typed the command
+        activeBot.emit('chat', OWNER, `!friend add ${trimmed}`)
+        socket.emit('toast', { message: `Added ${trimmed} as friend`, type: 'success' })
+
+        // Update friends list after a short delay
+        setTimeout(() => io.emit('friends', FRIENDS), 500)
+    })
+
+    socket.on('friend-remove', (name) => {
+        if (!name || typeof name !== 'string') return
+        const trimmed = name.trim()
+        if (!trimmed) return
+
+        activeBot.emit('chat', OWNER, `!friend remove ${trimmed}`)
+        socket.emit('toast', { message: `Removed ${trimmed} from friends`, type: 'success' })
+
+        setTimeout(() => io.emit('friends', FRIENDS), 500)
+    })
+
+    socket.on('disconnect', () => {
+        console.log('🌐 Dashboard client disconnected')
+    })
+})
+
+// ===========================
+// PERIODIC STATE BROADCASTS
+// ===========================
+
+// Broadcast bot state every 1 second
+setInterval(() => {
+    if (!activeBot || !activeBot.entity) {
+        io.emit('botState', {
+            health: 0, food: 0, armor: 0,
+            position: null, xpLevel: 0, xpProgress: 0,
+            deaths: death, heldItem: 'nothing',
+            guardMode, patrolMode, followMode, godMode,
+            antiAfk: !!antiAfkInterval, inCombat: false,
+            home: homePosition ? { x: homePosition.x, y: homePosition.y, z: homePosition.z } : null,
+            serverIp: data.ip, botName: data.name, owner: OWNER,
+            isConnected: false
+        })
+        return
+    }
+
+    try {
+        const bot = activeBot
+        const armorSlots = [5, 6, 7, 8] // head, chest, legs, feet
+        let totalArmor = 0
+        // Simple armor calculation based on equipped armor pieces
+        const armorItems = bot.inventory.slots.filter((s, i) => armorSlots.includes(i) && s)
+        // Approximate armor points by counting pieces
+        armorItems.forEach(item => {
+            if (!item) return
+            const name = item.name || ''
+            if (name.includes('netherite')) totalArmor += 5
+            else if (name.includes('diamond')) totalArmor += 4.5
+            else if (name.includes('iron')) totalArmor += 3.5
+            else if (name.includes('chainmail')) totalArmor += 3
+            else if (name.includes('gold')) totalArmor += 2.5
+            else if (name.includes('leather')) totalArmor += 1.5
+            else totalArmor += 1
+        })
+
+        io.emit('botState', {
+            health: bot.health || 0,
+            food: bot.food || 0,
+            armor: Math.min(totalArmor, 20),
+            position: bot.entity.position ? {
+                x: bot.entity.position.x,
+                y: bot.entity.position.y,
+                z: bot.entity.position.z
+            } : null,
+            xpLevel: bot.experience?.level || 0,
+            xpProgress: bot.experience?.progress || 0,
+            deaths: death,
+            heldItem: bot.heldItem ? bot.heldItem.name.replace(/_/g, ' ') : 'nothing',
+            guardMode,
+            patrolMode,
+            followMode,
+            godMode,
+            antiAfk: !!antiAfkInterval,
+            inCombat: !!bot.pvp?.target,
+            home: homePosition ? { x: homePosition.x, y: homePosition.y, z: homePosition.z } : null,
+            serverIp: data.ip,
+            botName: data.name || bot.username,
+            owner: OWNER,
+            isConnected: true
+        })
+    } catch (err) {
+        // Ignore state broadcast errors
+    }
+}, 1000)
+
+// Broadcast inventory every 5 seconds
+setInterval(() => {
+    if (!activeBot || !activeBot.inventory) {
+        io.emit('inventory', [])
+        return
+    }
+
+    try {
+        const items = activeBot.inventory.items().map(item => ({
+            name: item.name,
+            count: item.count,
+            slot: item.slot
+        }))
+        io.emit('inventory', items)
+    } catch (err) {
+        // Ignore inventory broadcast errors
+    }
+}, 5000)
 
 const PORT = process.env.PORT || 3000
 
-app.listen(PORT, () => {
-    console.log(`🌐 Web server running on port ${PORT}`)
+server.listen(PORT, () => {
+    console.log(`🌐 Dashboard running on http://localhost:${PORT}`)
 })
