@@ -1182,8 +1182,10 @@ function createBot() {
             }
 
             bot.chat('🔄 Anti-AFK mode enabled.')
+            bot.chat(`/gamemode creative ${bot.username}`)
 
             antiAfkInterval = setInterval(() => {
+                bot.swingArm()
 
                 // Jump or look randomly
                 if (Math.random() > 0.5) {
@@ -1218,6 +1220,7 @@ function createBot() {
             antiAfkInterval = null
 
             bot.chat('🛑 Anti-AFK mode disabled.')
+            bot.chat(`/gamemode survival ${bot.username}`)
         }
 
         // =========================
