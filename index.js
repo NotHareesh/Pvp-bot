@@ -1261,7 +1261,9 @@ function createBot() {
             }
 
             const homeGoal = new goals.GoalNear(homePosition.x, homePosition.y, homePosition.z, 1)
-            bot.pathfinder.setGoal(homeGoal)
+            bot.pathfinder.setGoal(homeGoal, true)
+
+            const initialDist = bot.entity.position.distanceTo(homePosition)
 
             const checkInterval = setInterval(() => {
                 if (!isGoingHome) {
@@ -1280,7 +1282,9 @@ function createBot() {
                 }
             }, 500)
 
-            // Safety timeout after 45 seconds
+            // Dynamic timeout based on distance (min 1 minute, ~1 sec per block)
+            const timeoutMs = Math.max(60000, initialDist * 1000)
+
             setTimeout(() => {
                 if (isGoingHome) {
                     clearInterval(checkInterval)
@@ -1289,7 +1293,7 @@ function createBot() {
                     followMode = 'stay'
                     bot.pathfinder.setGoal(null)
                 }
-            }, 45000)
+            }, timeoutMs)
         }
 
         // =========================
