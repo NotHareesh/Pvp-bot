@@ -123,6 +123,21 @@ function createBot() {
     // HELPERS (ACCESSIBLE TO ALL LISTENERS)
     // =========================
 
+    // Passive / non-hostile mobs that should never be auto-targeted
+    const passiveMobs = [
+        'cod', 'salmon', 'tropical_fish', 'pufferfish',   // fish
+        'squid', 'glow_squid', 'dolphin', 'axolotl',     // water mobs
+        'turtle', 'tadpole', 'frog',                      // amphibians
+        'cow', 'pig', 'sheep', 'chicken', 'rabbit',       // farm animals
+        'horse', 'donkey', 'mule', 'llama',               // rideable
+        'cat', 'ocelot', 'wolf', 'fox', 'parrot',         // tameable
+        'bat', 'bee', 'goat', 'mooshroom',                // misc passive
+        'villager', 'wandering_trader', 'iron_golem',     // NPCs
+        'snow_golem', 'allay', 'sniffer', 'camel',
+        'armor_stand', 'item_frame', 'glow_item_frame',   // decorative entities
+        'painting', 'boat', 'minecart',
+    ]
+
     function isValidEnemy(entity) {
 
         if (!entity) return false
@@ -149,6 +164,9 @@ function createBot() {
             entity.name === 'fireball' ||
             entity.name === 'small_fireball'
         ) return false
+
+        // Ignore passive / non-hostile mobs (fish, animals, villagers, etc.)
+        if (passiveMobs.includes(entity.name)) return false
 
         return true
     }
@@ -314,10 +332,29 @@ function createBot() {
         // Disable digging in PVP's own movements too
         bot.pvp.movements.canDig = false
 
-        // Restore our movements after combat ends
+        // Restore our movements after combat ends and resume patrol if active
         bot.on('stoppedAttacking', () => {
             defaultMove.canDig = false
             bot.pathfinder.setMovements(defaultMove)
+            currentTarget = null
+
+            // If patrol mode is active, resume patrolling after a short delay
+            if (patrolMode && homePosition) {
+                setTimeout(() => {
+                    if (!patrolMode || bot.pvp.target) return
+                    // Navigate back toward home area, patrol loop will pick up from goal_reached
+                    const angle = Math.random() * Math.PI * 2
+                    const dist = 4 + Math.random() * 8
+                    const targetX = homePosition.x + Math.cos(angle) * dist
+                    const targetZ = homePosition.z + Math.sin(angle) * dist
+                    try {
+                        const goal = new goals.GoalNear(targetX, homePosition.y, targetZ, 2)
+                        bot.pathfinder.setGoal(goal, false)
+                    } catch (err) {
+                        console.log('⚠️ Failed to resume patrol after combat')
+                    }
+                }, 1500)
+            }
         })
 
         bot.chat('🤖 AI Combat Bot Online')
@@ -607,10 +644,20 @@ function createBot() {
         // SELF DEFENSE
         // =========================
 
+        let lastSelfDefenseTime = 0
+
         bot.on('entityHurt', entity => {
 
             // Bot got hit
             if (entity !== bot.entity) return
+
+            // Debounce: only react once every 2 seconds to avoid spam
+            const now = Date.now()
+            if (now - lastSelfDefenseTime < 2000) return
+            lastSelfDefenseTime = now
+
+            // Already fighting something, don't switch targets
+            if (bot.pvp.target) return
 
             console.log('⚠️ I got attacked!')
 
@@ -636,6 +683,8 @@ function createBot() {
         // PROTECT OWNER
         // =========================
 
+        let lastProtectDefenseTime = 0
+
         bot.on('entityHurt', entity => {
 
             const owner = bot.players[OWNER]?.entity
@@ -645,8 +694,16 @@ function createBot() {
             // Owner got hit
             if (entity !== owner) return
 
+            // Debounce: only react once every 2 seconds
+            const now = Date.now()
+            if (now - lastProtectDefenseTime < 2000) return
+            lastProtectDefenseTime = now
+
             // If patrolMode is active and owner is far away, ignore!
             if (patrolMode && homePosition && owner.position.distanceTo(homePosition) > 20) return
+
+            // Already fighting something, don't switch targets
+            if (bot.pvp.target) return
 
             const attacker = bot.nearestEntity(e => {
 
@@ -658,8 +715,6 @@ function createBot() {
             })
 
             if (!attacker) return
-
-            const now = Date.now()
 
             if (now - lastProtectMessage > 5000) {
 
@@ -676,6 +731,9 @@ function createBot() {
         // ASSIST OWNER ATTACKS
         // =========================
 
+        let lastWolfAssistTime = 0
+        let lastWolfAssistMsg = 0
+
         bot.on('entitySwingArm', entity => {
 
             // Only owner
@@ -683,8 +741,16 @@ function createBot() {
 
             if (entity.username !== OWNER) return
 
+            // Debounce: only react once every 2 seconds
+            const now = Date.now()
+            if (now - lastWolfAssistTime < 2000) return
+            lastWolfAssistTime = now
+
             // If patrolMode is active and owner is far away, ignore!
             if (patrolMode && homePosition && entity.position.distanceTo(homePosition) > 20) return
+
+            // Already fighting something, don't switch targets
+            if (bot.pvp.target) return
 
             // Find nearest entity near owner
             const target = bot.nearestEntity(e => {
@@ -699,10 +765,14 @@ function createBot() {
 
             if (!target) return
 
-            logToOwner(
-                bot,
-                `🐺 Assisting against ${target.name || target.username}`
-            )
+            // Throttle chat messages to once every 10 seconds
+            if (now - lastWolfAssistMsg > 10000) {
+                logToOwner(
+                    bot,
+                    `🐺 Assisting against ${target.name || target.username}`
+                )
+                lastWolfAssistMsg = now
+            }
             attackTarget(target)
         })
         // =========================
