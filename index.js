@@ -1027,8 +1027,8 @@ function createBot() {
 
         if (username === bot.username) return
 
-        // OWNER ONLY
-        if (username !== OWNER) return
+        // OWNER OR PROTECTED PLAYER ONLY
+        if (username !== OWNER && username !== protectPlayer) return
 
         console.log(`📩 ${username}: ${message}`)
 
