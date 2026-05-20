@@ -347,10 +347,8 @@ function createBot() {
 
         defaultMove.infiniteLiquidDropdownDistance = false
 
-        // Allowed scaffold blocks
-        defaultMove.scafoldingBlocks = [
-            mcData.itemsByName.dirt.id
-        ]
+        // Allowed scaffold blocks (empty by default to avoid griefing home area)
+        defaultMove.scafoldingBlocks = []
 
         bot.pathfinder.setMovements(defaultMove)
 
@@ -886,8 +884,10 @@ function createBot() {
                 const hostiles = Object.values(bot.entities).filter(e => {
                     if (!e || !e.isValid || !e.position) return false
                     if (!priorities[e.name]) return false
-                    
-                    const distToHome = e.position.distanceTo(homePosition)
+                    const distToHome = Math.sqrt(
+                        Math.pow(e.position.x - homePosition.x, 2) + 
+                        Math.pow(e.position.z - homePosition.z, 2)
+                    )
                     return distToHome <= patrolRadius
                 })
 
@@ -1126,9 +1126,9 @@ function createBot() {
                     bot.chat('🛑 Standing ground (follow disabled).')
                 } else {
                     followMode = 'close'
-                    const goal = new goals.GoalFollow(target, 2)
+                    const goal = new goals.GoalFollow(target, 1)
                     bot.pathfinder.setGoal(goal, true)
-                    bot.chat(`👣 Following ${username} (close mode, 2 blocks).`)
+                    bot.chat(`👣 Following ${username} (close mode, 1 block).`)
                 }
                 return
             }
@@ -1148,21 +1148,21 @@ function createBot() {
 
                 followMode = 'loose'
 
-                const goal = new goals.GoalFollow(target, 6)
+                const goal = new goals.GoalFollow(target, 3)
 
                 bot.pathfinder.setGoal(goal, true)
 
-                bot.chat(`👣 Following ${username} (loose mode, 6 blocks).`)
+                bot.chat(`👣 Following ${username} (loose mode, 3 blocks).`)
 
             } else if (arg === 'close' || arg === 'on') {
 
                 followMode = 'close'
 
-                const goal = new goals.GoalFollow(target, 2)
+                const goal = new goals.GoalFollow(target, 1)
 
                 bot.pathfinder.setGoal(goal, true)
 
-                bot.chat(`👣 Following ${username} (close mode, 2 blocks).`)
+                bot.chat(`👣 Following ${username} (close mode, 1 block).`)
             } else {
                 bot.chat('❌ Invalid follow mode. Use close, loose, stay, on, off, or toggle.')
             }
@@ -1439,7 +1439,10 @@ function createBot() {
         // COME
         // =========================
 
-        if (message === '!come') {
+        if (message.startsWith('!come')) {
+
+            const args = message.split(' ')
+            const shouldDig = args[1] === 'dig'
 
             const target = bot.players[username]?.entity
 
@@ -1452,6 +1455,18 @@ function createBot() {
             patrolMode = false
             followMode = 'stay'
 
+            if (defaultMove) {
+                if (shouldDig) {
+                    defaultMove.canDig = true
+                    defaultMove.placeCost = 1
+                    defaultMove.scafoldingBlocks = [mcData.itemsByName.dirt.id, mcData.itemsByName.cobblestone.id]
+                } else {
+                    defaultMove.canDig = false
+                    defaultMove.scafoldingBlocks = []
+                }
+                bot.pathfinder.setMovements(defaultMove)
+            }
+
             const goal = new goals.GoalNear(
                 target.position.x,
                 target.position.y,
@@ -1459,9 +1474,13 @@ function createBot() {
                 1
             )
 
-            bot.pathfinder.setGoal(goal)
+            bot.pathfinder.setGoal(goal, true)
 
-            bot.chat('🏃 Coming!')
+            if (shouldDig) {
+                bot.chat('⛏️ Digging and building my way to you!')
+            } else {
+                bot.chat('🏃 Coming!')
+            }
         }
 
         // =========================
@@ -1741,7 +1760,7 @@ function createBot() {
 
             bot.chat('/msg SilverSurfer915 !follow <close|loose|stay|on|off> → Follow settings/Toggle')
 
-            bot.chat('/msg SilverSurfer915 !come → Come to owner')
+            bot.chat('/msg SilverSurfer915 !come [dig] → Come to owner (dig to escape caves)')
 
             bot.chat('/msg SilverSurfer915 !stop → Stop combat/pathfinding')
 
