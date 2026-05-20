@@ -1848,7 +1848,7 @@ function createBot() {
 
         console.log('🔄 Disconnected. Reconnecting in 5 seconds...')
 
-        setTimeout(createBot, 5000)
+        setTimeout(() => { activeBot = createBot() }, 5000)
     })
 
     return bot
@@ -1858,7 +1858,45 @@ function createBot() {
 // START BOT
 // =========================
 
-createBot()
+let activeBot = createBot()
+
+// =========================
+// CONSOLE ADMIN
+// =========================
+
+const readline = require('readline')
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: '> '
+})
+
+rl.prompt()
+
+rl.on('line', (line) => {
+    const input = line.trim()
+    if (!input) {
+        rl.prompt()
+        return
+    }
+
+    if (input.startsWith('!')) {
+        // Bot command — emit as if owner typed it in chat
+        console.log(`🖥️ Console command: ${input}`)
+        activeBot.emit('chat', OWNER, input)
+    } else if (input.startsWith('say ')) {
+        // Send raw chat message as the bot
+        const msg = input.slice(4)
+        activeBot.chat(msg)
+        console.log(`💬 Bot said: ${msg}`)
+    } else {
+        // Default: treat as bot command
+        console.log(`🖥️ Console command: ${input}`)
+        activeBot.emit('chat', OWNER, input)
+    }
+
+    rl.prompt()
+})
 
 // =========================
 // WEB SERVER
