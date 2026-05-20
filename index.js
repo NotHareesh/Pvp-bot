@@ -911,21 +911,22 @@ function createBot() {
 
         setInterval(() => {
 
-            const owner = bot.players[OWNER]?.entity
+            const followName = protectPlayer || OWNER
+            const targetEntity = bot.players[followName]?.entity
 
-            if (!owner) return
+            if (!targetEntity) return
 
             // 'stay' mode disables automatic following, also don't follow while patrolling or going home
             if (followMode === 'stay' || patrolMode || isGoingHome) return
 
-            const distance = bot.entity.position.distanceTo(owner.position)
+            const distance = bot.entity.position.distanceTo(targetEntity.position)
 
             const followDist = followMode === 'loose' ? 6 : 2
 
             // Stay close to owner
             if (distance > (followDist + 2) && !bot.pvp.target) {
 
-                const goal = new goals.GoalFollow(owner, followDist)
+                const goal = new goals.GoalFollow(targetEntity, followDist)
 
                 bot.pathfinder.setGoal(goal, true)
             }
@@ -1107,7 +1108,8 @@ function createBot() {
             isGoingHome = false
             patrolMode = false
 
-            const target = bot.players[username]?.entity
+            const followName = protectPlayer || username
+            const target = bot.players[followName]?.entity
 
             if (!target) {
 
@@ -1128,7 +1130,7 @@ function createBot() {
                     followMode = 'close'
                     const goal = new goals.GoalFollow(target, 2)
                     bot.pathfinder.setGoal(goal, true)
-                    bot.chat(`👣 Following ${username} (close mode, 2 blocks).`)
+                    bot.chat(`👣 Following ${followName} (close mode, 2 blocks).`)
                 }
                 return
             }
@@ -1152,7 +1154,7 @@ function createBot() {
 
                 bot.pathfinder.setGoal(goal, true)
 
-                bot.chat(`👣 Following ${username} (loose mode, 6 blocks).`)
+                bot.chat(`👣 Following ${followName} (loose mode, 6 blocks).`)
 
             } else if (arg === 'close' || arg === 'on') {
 
@@ -1162,7 +1164,7 @@ function createBot() {
 
                 bot.pathfinder.setGoal(goal, true)
 
-                bot.chat(`👣 Following ${username} (close mode, 2 blocks).`)
+                bot.chat(`👣 Following ${followName} (close mode, 2 blocks).`)
             } else {
                 bot.chat('❌ Invalid follow mode. Use close, loose, stay, on, off, or toggle.')
             }
@@ -1430,7 +1432,8 @@ function createBot() {
 
         if (message === '!come') {
 
-            const target = bot.players[username]?.entity
+            const comeName = protectPlayer || username
+            const target = bot.players[comeName]?.entity
 
             if (!target) {
                 bot.chat('❌ Cannot find you.')
