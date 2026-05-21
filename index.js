@@ -1,6 +1,7 @@
 const mineflayer = require('mineflayer')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const pvp = require('mineflayer-pvp').plugin
+const armorManager = require('mineflayer-armor-manager')
 const minecraftData = require('minecraft-data')
 const fs = require('fs')
 
@@ -18,11 +19,12 @@ let currentTarget = null
 let combatInterval = null
 
 let antiAfkInterval = null
-let followMode = 'close'
+let followMode = 'stay'
 let homePosition = null
 let patrolMode = false
-let patrolRadius = 20
+let patrolRadius = 12
 let isGoingHome = false
+let isEating = false
 const app = express()
 const server = http.createServer(app)
 const io = new SocketServer(server, {
@@ -120,6 +122,7 @@ function createBot() {
 
     bot.loadPlugin(pathfinder)
     bot.loadPlugin(pvp)
+    bot.loadPlugin(armorManager)
 
     // =========================
     // HELPERS (ACCESSIBLE TO ALL LISTENERS)
@@ -229,12 +232,40 @@ function createBot() {
         }
 
         try {
-
             bot.pvp.attack(target)
 
-        } catch (err) {
+            // Watchdog to prevent getting stuck on unreachable mobs
+            let hitRecently = true
+            const watchdog = setInterval(() => {
+                if (bot.pvp.target !== target) {
+                    clearInterval(watchdog)
+                    return
+                }
+                if (!hitRecently) {
+                    console.log('⚠️ Target unreachable (no hits for 12s), aborting attack...')
+                    bot.pvp.stop()
+                    clearInterval(watchdog)
+                }
+                hitRecently = false
+            }, 12000)
 
-            console.log('❌ Attack failed')
+            const onHurt = (entity) => {
+                if (entity === target) hitRecently = true
+            }
+            bot.on('entityHurt', onHurt)
+
+            const onStopped = () => {
+                clearInterval(watchdog)
+                bot.removeListener('entityHurt', onHurt)
+                bot.removeListener('stoppedAttacking', onStopped)
+                if (currentTarget === target) {
+                    currentTarget = null
+                }
+            }
+            bot.on('stoppedAttacking', onStopped)
+
+        } catch (err) {
+            console.log('❌ Attack failed:', err)
         }
     }
 
@@ -254,6 +285,34 @@ function createBot() {
 
         console.log('✅ Bot spawned!')
 
+        // =========================
+        // RESUME STATE AFTER DISCONNECT
+        // =========================
+        setTimeout(() => {
+            if (antiAfkInterval) {
+                antiAfkInterval = null
+                bot.chat('🔄 Reconnected! Resuming Anti-AFK mode.')
+                bot.emit('chat', OWNER, '!afk on')
+            } else {
+                if (patrolMode) {
+                    patrolMode = false
+                    bot.chat('🔄 Reconnected! Resuming patrol mode.')
+                    bot.emit('chat', OWNER, '!patrol on')
+                }
+            }
+
+            if (followMode !== 'stay') {
+                const fm = followMode
+                followMode = 'stay'
+                bot.chat(`🔄 Reconnected! Resuming follow mode (${fm}).`)
+                bot.emit('chat', OWNER, `!follow ${fm}`)
+            }
+
+            if (guardMode) {
+                bot.chat('🛡️ Guard mode is active.')
+            }
+        }, 3000)
+
         const mcData = minecraftData(bot.version)
 
         // Convert loaded home position to Vec3
@@ -264,6 +323,10 @@ function createBot() {
         }
 
         defaultMove = new Movements(bot, mcData)
+        if (mcData.blocksByName.campfire) defaultMove.blocksToAvoid.add(mcData.blocksByName.campfire.id)
+        if (mcData.blocksByName.soul_campfire) defaultMove.blocksToAvoid.add(mcData.blocksByName.soul_campfire.id)
+        if (mcData.blocksByName.sweet_berry_bush) defaultMove.blocksToAvoid.add(mcData.blocksByName.sweet_berry_bush.id)
+        if (mcData.blocksByName.magma_block) defaultMove.blocksToAvoid.add(mcData.blocksByName.magma_block.id)
         // =========================
         // AUTO STORE
         // =========================
@@ -371,7 +434,7 @@ function createBot() {
                     const targetX = homePosition.x + Math.cos(angle) * dist
                     const targetZ = homePosition.z + Math.sin(angle) * dist
                     try {
-                        const goal = new goals.GoalNear(targetX, homePosition.y, targetZ, 2)
+                        const goal = new goals.GoalNear(targetX, bot.entity.position.y, targetZ, 2)
                         bot.pathfinder.setGoal(goal, false)
                     } catch (err) {
                         console.log('⚠️ Failed to resume patrol after combat')
@@ -405,41 +468,10 @@ function createBot() {
         // =========================
         // AUTO EQUIP ARMOR
         // =========================
-
         setInterval(() => {
-
-            const helmet = bot.inventory.items().find(item =>
-                item.name.includes('helmet')
-            )
-
-            const chestplate = bot.inventory.items().find(item =>
-                item.name.includes('chestplate')
-            )
-
-            const leggings = bot.inventory.items().find(item =>
-                item.name.includes('leggings')
-            )
-
-            const boots = bot.inventory.items().find(item =>
-                item.name.includes('boots')
-            )
-
-            if (helmet) {
-                bot.equip(helmet, 'head').catch(() => { })
-            }
-
-            if (chestplate) {
-                bot.equip(chestplate, 'torso').catch(() => { })
-            }
-
-            if (leggings) {
-                bot.equip(leggings, 'legs').catch(() => { })
-            }
-
-            if (boots) {
-                bot.equip(boots, 'feet').catch(() => { })
-            }
-
+            try {
+                if (bot.armorManager) bot.armorManager.equipAll()
+            } catch (err) {}
         }, 5000)
 
 
@@ -448,7 +480,7 @@ function createBot() {
         // =========================
 
         setInterval(async () => {
-
+            if (isEating) return
             try {
 
                 // Sword priority
@@ -495,8 +527,6 @@ function createBot() {
                     return
                 }
 
-
-
                 // Default fallback: sword first, then axe
                 if (sword) {
                     if (!bot.heldItem || bot.heldItem.name !== sword.name) {
@@ -527,77 +557,7 @@ function createBot() {
 
         }, 3000)
 
-        // =========================
-        // LOW HEALTH PEARL ESCAPE
-        // =========================
 
-        let lastPearl = 0
-        let escaping = false
-
-        bot.on('physicsTick', async () => {
-
-            // Already escaping
-            if (escaping) return
-
-            // Only pearl at VERY low HP
-            if (bot.health > 4) return
-
-            const now = Date.now()
-
-            // 15 second cooldown
-            if (now - lastPearl < 15000) return
-
-            const pearl = bot.inventory.items().find(item =>
-                item.name.includes('ender_pearl')
-            )
-
-            if (!pearl) return
-
-            try {
-
-                escaping = true
-                lastPearl = now
-
-                console.log('🟣 Pearl escape used')
-
-                // STOP combat
-                bot.pvp.stop()
-
-                currentTarget = null
-
-                // Equip pearl
-                await bot.equip(pearl, 'hand')
-
-                // Look SLIGHTLY upward
-                // NOT TOO HIGH
-                await bot.look(
-                    bot.entity.yaw,
-                    -0.3,
-                    true
-                )
-
-                // Throw pearl
-                bot.activateItem()
-
-                // Run away after pearl
-                bot.setControlState('forward', true)
-                bot.setControlState('sprint', true)
-
-                setTimeout(() => {
-
-                    bot.setControlState('forward', false)
-
-                    escaping = false
-
-                }, 4000)
-
-            } catch (err) {
-
-                escaping = false
-
-                console.log('❌ Pearl escape failed')
-            }
-        })
 
         // =========================
         // AUTO SWIM
@@ -679,21 +639,23 @@ function createBot() {
             if (now - lastSelfDefenseTime < 2000) return
             lastSelfDefenseTime = now
 
-            // Already fighting something, don't switch targets
-            if (bot.pvp.target) return
-
-            console.log('⚠️ I got attacked!')
-
             const attacker = bot.nearestEntity(e => {
 
                 if (!isValidEnemy(e)) return false
 
                 return (
-                    e.position.distanceTo(bot.entity.position) <= 6
+                    e.position.distanceTo(bot.entity.position) <= 30
                 )
             })
 
             if (!attacker) return
+
+            if (bot.pvp.target === attacker) return // already fighting them
+
+            if (bot.pvp.target) {
+                console.log(`⚠️ Switching targets to defend against ${attacker.name || attacker.username}!`)
+                bot.pvp.stop()
+            }
 
             console.log(
                 `⚔️ Counter attacking ${attacker.name || attacker.username}`
@@ -884,6 +846,9 @@ function createBot() {
                 const hostiles = Object.values(bot.entities).filter(e => {
                     if (!e || !e.isValid || !e.position) return false
                     if (!priorities[e.name]) return false
+                    // Don't target mobs in deep caves under the base
+                    if (Math.abs(e.position.y - homePosition.y) > 12) return false
+
                     const distToHome = Math.sqrt(
                         Math.pow(e.position.x - homePosition.x, 2) + 
                         Math.pow(e.position.z - homePosition.z, 2)
@@ -916,7 +881,7 @@ function createBot() {
                 const target = bot.nearestEntity(e => {
                     if (!e || !e.isValid || !e.position) return false
                     if (!hostileMobs.includes(e.name)) return false
-                    if (Math.abs(e.position.y - owner.position.y) > 3) return false
+                    if (Math.abs(e.position.y - owner.position.y) > 8) return false
                     return e.position.distanceTo(owner.position) <= 30
                 })
 
@@ -945,7 +910,7 @@ function createBot() {
             const followDist = followMode === 'loose' ? 6 : 2
 
             // Stay close to owner
-            if (distance > (followDist + 2) && !bot.pvp.target) {
+            if (distance > (followDist + 2) && !bot.pvp.target && !currentTarget) {
 
                 const goal = new goals.GoalFollow(owner, followDist)
 
@@ -1129,6 +1094,7 @@ function createBot() {
                     const goal = new goals.GoalFollow(target, 1)
                     bot.pathfinder.setGoal(goal, true)
                     bot.chat(`👣 Following ${username} (close mode, 1 block).`)
+                    if (!guardMode) bot.emit('chat', username, '!guard on')
                 }
                 return
             }
@@ -1153,6 +1119,7 @@ function createBot() {
                 bot.pathfinder.setGoal(goal, true)
 
                 bot.chat(`👣 Following ${username} (loose mode, 3 blocks).`)
+                if (!guardMode) bot.emit('chat', username, '!guard on')
 
             } else if (arg === 'close' || arg === 'on') {
 
@@ -1163,6 +1130,7 @@ function createBot() {
                 bot.pathfinder.setGoal(goal, true)
 
                 bot.chat(`👣 Following ${username} (close mode, 1 block).`)
+                if (!guardMode) bot.emit('chat', username, '!guard on')
             } else {
                 bot.chat('❌ Invalid follow mode. Use close, loose, stay, on, off, or toggle.')
             }
@@ -1383,6 +1351,7 @@ function createBot() {
                 const targetZ = homePosition.z + Math.sin(angle) * dist
 
                 try {
+                    // Use homePosition.y so it tries to stay at the same elevation as the base instead of walking down into caves
                     const goal = new goals.GoalNear(targetX, homePosition.y, targetZ, 2)
                     bot.pathfinder.setGoal(goal, false)
                 } catch (err) {
@@ -1634,58 +1603,58 @@ function createBot() {
         // =========================
 
         if (message.startsWith('!drop ')) {
-
-            const itemName = message.split(' ')[1]
+            const args = message.split(' ')
+            const itemName = args[1]
+            const qtyStr = args[2]
+            const qty = qtyStr ? parseInt(qtyStr, 10) : null
 
             if (!itemName) {
-
-                bot.chat('❌ Specify item name or "all".')
-
+                bot.chat('❌ Specify item name or "all". (e.g. !drop dirt 10)')
                 return
             }
 
             try {
+                // Come to owner first
+                const target = bot.players[username]?.entity
+                if (target) {
+                    bot.chat(`🏃 Coming to drop ${itemName}...`)
+                    try {
+                        const goal = new goals.GoalNear(target.position.x, target.position.y, target.position.z, 2)
+                        await bot.pathfinder.goto(goal)
+                        bot.lookAt(target.position.offset(0, 1.5, 0), true)
+                    } catch (e) {
+                        bot.chat('⚠️ Could not reach you, dropping here.')
+                    }
+                }
 
                 if (itemName === 'all') {
-
                     const items = bot.inventory.items()
-
-                    if (items.length === 0) {
-
-                        bot.chat('❌ Inventory empty.')
-
-                        return
-                    }
-
+                    if (items.length === 0) return bot.chat('❌ Inventory empty.')
                     bot.chat('📦 Dropping all items.')
-
                     for (const item of items) {
-
                         await bot.tossStack(item)
                     }
-
                     return
                 }
 
-                const item = bot.inventory.items().find(i =>
-                    i.name.includes(itemName)
-                )
-
-                if (!item) {
-
+                const items = bot.inventory.items().filter(i => i.name.includes(itemName))
+                if (items.length === 0) {
                     bot.chat(`❌ No ${itemName} in inventory.`)
-
                     return
                 }
 
-                bot.chat(`📦 Dropping ${item.name}`)
-
-                await bot.tossStack(item)
+                bot.chat(`📦 Dropping ${qty ? qty : 'all'} ${itemName}`)
+                
+                if (qty && !isNaN(qty) && qty > 0) {
+                    await bot.toss(items[0].type, null, qty)
+                } else {
+                    for (const it of items) {
+                        await bot.tossStack(it)
+                    }
+                }
 
             } catch (err) {
-
                 console.log(err)
-
                 bot.chat('❌ Failed to drop item.')
             }
         }
@@ -2088,12 +2057,11 @@ function createBot() {
         // If patrolMode is active and owner is far away, ignore!
         if (patrolMode && homePosition && owner.position.distanceTo(homePosition) > 20) return
 
-        // Arrow near owner
-        const nearOwner =
-            entity.position.distanceTo(owner.position) <= 5
-
-
-        if (!nearOwner) return
+        // Arrow near bot (or owner)
+        const nearOwner = owner && entity.position.distanceTo(owner.position) <= 5
+        const nearBot = entity.position.distanceTo(bot.entity.position) <= 15
+        
+        if (!nearOwner && !nearBot) return
 
         // Find nearby skeleton
         const skeleton = bot.nearestEntity(e => {
@@ -2105,7 +2073,7 @@ function createBot() {
             if (!e.position) return false
 
             return (
-                e.position.distanceTo(entity.position) <= 20
+                e.position.distanceTo(entity.position) <= 30
             )
         })
 
@@ -2126,27 +2094,37 @@ function createBot() {
         currentTarget = null
 
         console.log(`💀 Bot died ${death} times`)
+        bot.chat('💀 I died! Stopping all activities.')
+        bot.emit('chat', OWNER, '!stop')
+        try {
+            bot.pvp.stop()
+            bot.pathfinder.setGoal(null)
+        } catch (e) {}
     })
 
     // =========================
     // AUTO EAT
     // =========================
 
-    let isEating = false
     setInterval(async () => {
         if (isEating) return
         if (!bot.inventory) return
-        if (bot.food >= 10) return
+        if (bot.food >= 18) return
 
-        const food = bot.inventory.items().find(item =>
-            item.name.includes('bread') ||
-            item.name.includes('cooked_beef') ||
-            item.name.includes('cooked_porkchop') ||
-            item.name.includes('golden_apple') ||
-            item.name.includes('apple')
-        )
+        const foodNames = [
+            'bread', 'cooked_beef', 'cooked_porkchop', 'golden_apple', 'apple', 
+            'baked_potato', 'cooked_mutton', 'cooked_chicken', 'cooked_rabbit', 
+            'cooked_salmon', 'cooked_cod', 'carrot', 'sweet_berries', 'melon_slice'
+        ]
 
-        if (!food) return
+        const food = bot.inventory.items().find(item => foodNames.includes(item.name))
+
+        if (!food) {
+            if (bot.food <= 6 && Math.random() < 0.2) {
+                bot.chat('⚠️ I am starving! Please give me some food!')
+            }
+            return
+        }
 
         try {
             isEating = true
@@ -2166,11 +2144,17 @@ function createBot() {
 
     bot.on('error', err => {
         console.log('❌ Error:', err)
+        try {
+            bot.end()
+        } catch (e) {}
     })
 
     bot.on('end', () => {
 
         console.log('🔄 Disconnected. Reconnecting in 5 seconds...')
+        if (antiAfkInterval) {
+            clearInterval(antiAfkInterval)
+        }
 
         setTimeout(() => { activeBot = createBot() }, 5000)
     })
