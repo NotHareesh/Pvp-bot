@@ -1252,7 +1252,10 @@ function createBot() {
         // GO HOME
         // =========================
 
-        if (message === '!home') {
+        if (message.startsWith('!home')) {
+
+            const args = message.split(' ')
+            const shouldDig = args[1] === 'dig'
 
             if (!homePosition) {
 
@@ -1261,13 +1264,25 @@ function createBot() {
                 return
             }
 
-            bot.chat('🏃 Heading home...')
             isGoingHome = true
 
-            // Restore safe movements (no digging)
+            // Configure movements
             if (defaultMove) {
-                defaultMove.canDig = false
+                if (shouldDig) {
+                    defaultMove.canDig = true
+                    defaultMove.placeCost = 1
+                    defaultMove.scafoldingBlocks = [mcData.itemsByName.dirt.id, mcData.itemsByName.cobblestone.id]
+                } else {
+                    defaultMove.canDig = false
+                    defaultMove.scafoldingBlocks = []
+                }
                 bot.pathfinder.setMovements(defaultMove)
+            }
+
+            if (shouldDig) {
+                bot.chat('⛏️ Digging and building my way home!')
+            } else {
+                bot.chat('🏃 Heading home...')
             }
 
             const homeGoal = new goals.GoalNear(homePosition.x, homePosition.y, homePosition.z, 1)
@@ -1790,7 +1805,7 @@ function createBot() {
 
             bot.chat('/msg SilverSurfer915 !sethome → Save current position as home')
 
-            bot.chat('/msg SilverSurfer915 !home → Travel to home position')
+            bot.chat('/msg SilverSurfer915 !home [dig] → Travel to home position (dig to escape caves)')
 
             bot.chat('/msg SilverSurfer915 !patrol <on|off> → Patrol surroundings')
 
