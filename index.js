@@ -50,7 +50,7 @@ function logToOwner(bot, msg) {
 
     bot.chat(`/msg ${OWNER} ${msg}`)
 }
-const OWNER = 'SilverSurfer915'
+let OWNER = 'SilverSurfer915'
 
 // Server command settings
 // The bot will accept commands from the Minecraft server console/command blocks
@@ -449,10 +449,13 @@ function createBot() {
         // ===========================
         // DASHBOARD CHAT FEED
         // ===========================
-        // Forward all Minecraft chat messages to the web dashboard
+        // Forward all Minecraft chat messages to the web dashboard and terminal
         bot.on('message', (jsonMsg, position) => {
             const text = jsonMsg.toString().trim()
             if (!text) return
+
+            // Print chat to terminal so user can read it
+            console.log(text)
 
             // Classify message type for dashboard styling
             let type = 'chat'
@@ -471,7 +474,7 @@ function createBot() {
         setInterval(() => {
             try {
                 if (bot.armorManager) bot.armorManager.equipAll()
-            } catch (err) {}
+            } catch (err) { }
         }, 5000)
 
 
@@ -613,7 +616,7 @@ function createBot() {
                     // Check if door is closed (open property = false or 'false')
                     const isOpen = block.getProperties?.()?.open
                     if (isOpen === false || isOpen === 'false') {
-                        bot.activateBlock(block).catch(() => {})
+                        bot.activateBlock(block).catch(() => { })
                         lastDoorOpen = now
                         break
                     }
@@ -718,47 +721,53 @@ function createBot() {
 
         let lastWolfAssistTime = 0
         let lastWolfAssistMsg = 0
+        let lastOwnerSwingTime = 0
 
         bot.on('entitySwingArm', entity => {
-
-            // Only owner
-            if (!entity) return
-
-            if (entity.username !== OWNER) return
-
-            // Debounce: only react once every 2 seconds
-            const now = Date.now()
-            if (now - lastWolfAssistTime < 2000) return
-            lastWolfAssistTime = now
-
-            // If patrolMode is active and owner is far away, ignore!
-            if (patrolMode && homePosition && entity.position.distanceTo(homePosition) > 20) return
-
-            // Already fighting something, don't switch targets
-            if (bot.pvp.target) return
-
-            // Find nearest entity near owner
-            const target = bot.nearestEntity(e => {
-
-                if (!isValidEnemy(e, true)) return false
-
-                // Must be VERY close to owner
-                return (
-                    e.position.distanceTo(entity.position) <= 4
-                )
-            })
-
-            if (!target) return
-
-            // Throttle chat messages to once every 10 seconds
-            if (now - lastWolfAssistMsg > 10000) {
-                logToOwner(
-                    bot,
-                    `🐺 Assisting against ${target.name || target.username}`
-                )
-                lastWolfAssistMsg = now
+            if (entity && entity.username === OWNER) {
+                lastOwnerSwingTime = Date.now()
             }
-            attackTarget(target, true)
+        })
+
+        bot.on('entityHurt', entity => {
+            // Only process if it's a mob/player getting hurt
+            if (!entity || !entity.position) return
+
+            const owner = bot.players[OWNER]?.entity
+            if (!owner) return
+
+            // Exclude self and owner (handled by self defense / protect owner logic)
+            if (entity === bot.entity || entity === owner) return
+
+            const now = Date.now()
+
+            // If owner swung arm within last 1 second, and the hurt entity is within reach (6 blocks)
+            if (now - lastOwnerSwingTime < 1000 && entity.position.distanceTo(owner.position) <= 6) {
+
+                // Must be a valid enemy (allow passives)
+                if (!isValidEnemy(entity, true)) return
+
+                // Debounce
+                if (now - lastWolfAssistTime < 2000) return
+                lastWolfAssistTime = now
+
+                // If patrolMode is active and owner is far away, ignore!
+                if (patrolMode && homePosition && owner.position.distanceTo(homePosition) > 20) return
+
+                // Already fighting something, don't switch targets
+                if (bot.pvp.target) return
+
+                // Throttle chat messages
+                if (now - lastWolfAssistMsg > 10000) {
+                    logToOwner(
+                        bot,
+                        `🐺 Assisting against ${entity.name || entity.username}`
+                    )
+                    lastWolfAssistMsg = now
+                }
+
+                attackTarget(entity, true)
+            }
         })
         // =========================
         // SHIELD AI
@@ -850,7 +859,7 @@ function createBot() {
                     if (Math.abs(e.position.y - homePosition.y) > 12) return false
 
                     const distToHome = Math.sqrt(
-                        Math.pow(e.position.x - homePosition.x, 2) + 
+                        Math.pow(e.position.x - homePosition.x, 2) +
                         Math.pow(e.position.z - homePosition.z, 2)
                     )
                     return distToHome <= patrolRadius
@@ -1019,6 +1028,20 @@ function createBot() {
         console.log(`📩 ${username}: ${message}`)
 
         // =========================
+        // OWNER TRANSFER
+        // =========================
+
+        if (message.startsWith('!owner ')) {
+            const newOwner = message.split(' ')[1]
+            if (newOwner) {
+                OWNER = newOwner
+                bot.chat(`👑 Ownership transferred to ${OWNER}. I will now only obey them.`)
+                io.emit('toast', { message: `Ownership transferred to ${OWNER}`, type: 'success' })
+            }
+            return
+        }
+
+        // =========================
         // GUARD MODE ON
         // =========================
 
@@ -1150,7 +1173,7 @@ function createBot() {
             }
 
             bot.chat('🔄 Anti-AFK mode enabled.')
-            
+
             // Stop current actions, enable god mode, and start patrol
             bot.emit('chat', username, '!stop')
             if (!godMode) bot.emit('chat', username, '!god')
@@ -1592,7 +1615,7 @@ function createBot() {
 
             // Split into chunks of ~200 chars to avoid chat limits
             const chunks = list.match(/.{1,200}(?:, |$)/g) || [list]
-            
+
             for (const chunk of chunks) {
                 bot.chat(`/msg ${OWNER} Inv: ${chunk}`)
             }
@@ -1644,7 +1667,7 @@ function createBot() {
                 }
 
                 bot.chat(`📦 Dropping ${qty ? qty : 'all'} ${itemName}`)
-                
+
                 if (qty && !isNaN(qty) && qty > 0) {
                     await bot.toss(items[0].type, null, qty)
                 } else {
@@ -2060,7 +2083,7 @@ function createBot() {
         // Arrow near bot (or owner)
         const nearOwner = owner && entity.position.distanceTo(owner.position) <= 5
         const nearBot = entity.position.distanceTo(bot.entity.position) <= 15
-        
+
         if (!nearOwner && !nearBot) return
 
         // Find nearby skeleton
@@ -2099,7 +2122,7 @@ function createBot() {
         try {
             bot.pvp.stop()
             bot.pathfinder.setGoal(null)
-        } catch (e) {}
+        } catch (e) { }
     })
 
     // =========================
@@ -2112,8 +2135,8 @@ function createBot() {
         if (bot.food >= 18) return
 
         const foodNames = [
-            'bread', 'cooked_beef', 'cooked_porkchop', 'golden_apple', 'apple', 
-            'baked_potato', 'cooked_mutton', 'cooked_chicken', 'cooked_rabbit', 
+            'bread', 'cooked_beef', 'cooked_porkchop', 'golden_apple', 'apple',
+            'baked_potato', 'cooked_mutton', 'cooked_chicken', 'cooked_rabbit',
             'cooked_salmon', 'cooked_cod', 'carrot', 'sweet_berries', 'melon_slice'
         ]
 
@@ -2146,7 +2169,7 @@ function createBot() {
         console.log('❌ Error:', err)
         try {
             bot.end()
-        } catch (e) {}
+        } catch (e) { }
     })
 
     bot.on('end', () => {
@@ -2184,26 +2207,36 @@ rl.prompt()
 rl.on('line', (line) => {
     const input = line.trim()
     if (!input) {
-        rl.prompt()
+        rl.prompt(true)
         return
     }
 
-    if (input.startsWith('!')) {
-        // Bot command — emit as if owner typed it in chat
-        console.log(`🖥️ Console command: ${input}`)
-        activeBot.emit('chat', OWNER, input)
-    } else if (input.startsWith('say ')) {
-        // Send raw chat message as the bot
-        const msg = input.slice(4)
-        activeBot.chat(msg)
-        console.log(`💬 Bot said: ${msg}`)
-    } else {
-        // Default: treat as bot command
-        console.log(`🖥️ Console command: ${input}`)
-        activeBot.emit('chat', OWNER, input)
+    try {
+        if (!activeBot || !activeBot.entity) {
+            console.log(`❌ Bot is not fully spawned yet. Please wait.`)
+        } else if (input.startsWith('!')) {
+            // Bot command — emit as if owner typed it in chat
+            console.log(`🖥️ Console command: ${input}`)
+            activeBot.emit('chat', OWNER, input)
+        } else if (input.startsWith('say ')) {
+            // Send raw chat message as the bot
+            const msg = input.slice(4)
+            activeBot.chat(msg)
+            console.log(`💬 Bot said: ${msg}`)
+        } else if (input.startsWith('/')) {
+            // Send as a command
+            activeBot.chat(input)
+            console.log(`💬 Bot ran command: ${input}`)
+        } else {
+            // Default: Send raw chat message as the bot
+            activeBot.chat(input)
+            console.log(`💬 Bot said: ${input}`)
+        }
+    } catch (err) {
+        console.log(`❌ Failed to process terminal input:`, err.message)
     }
 
-    rl.prompt()
+    rl.prompt(true)
 })
 
 // =========================
@@ -2281,6 +2314,22 @@ io.on('connection', (socket) => {
 
         setTimeout(() => io.emit('friends', FRIENDS), 500)
     })
+
+    // --- Handle owner transfer ---
+    socket.on('owner-transfer', (newOwner) => {
+        if (!newOwner || typeof newOwner !== 'string') return
+        const trimmed = newOwner.trim()
+        if (!trimmed) return
+
+        OWNER = trimmed
+        if (activeBot && activeBot.entity) {
+            activeBot.chat(`👑 Dashboard has transferred ownership to ${OWNER}.`)
+        }
+        io.emit('toast', { message: `Dashboard ownership transferred to ${OWNER}`, type: 'success' })
+        console.log(`👑 Dashboard transferred ownership to ${OWNER}`)
+    })
+
+
 
     socket.on('disconnect', () => {
         console.log('🌐 Dashboard client disconnected')
